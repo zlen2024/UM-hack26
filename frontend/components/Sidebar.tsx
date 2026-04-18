@@ -7,6 +7,7 @@ import {
   Users, 
   Building2, 
   CheckSquare, 
+  Calendar,
   BarChart3,
   Bot,
   Settings,
@@ -19,6 +20,7 @@ const navItems = [
   { href: '/contacts', label: 'Contacts', icon: Users },
   { href: '/opportunities', label: 'Opportunities', icon: Building2 },
   { href: '/tasks', label: 'Tasks', icon: CheckSquare },
+  { href: '/calendar', label: 'Calendar', icon: Calendar },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
 ];
 

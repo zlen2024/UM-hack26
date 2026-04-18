@@ -240,7 +240,6 @@ export default function OpportunitiesPage() {
             </button>
           </div>
         ),
-        right: true,
         width: '140px',
       },
     ],
