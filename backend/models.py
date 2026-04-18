@@ -105,6 +105,8 @@ class Activity(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     type = Column(String)
     description = Column(Text, nullable=True)
+    source = Column(String, nullable=True)
+    external_id = Column(String, nullable=True)
     contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
     opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True)
     scheduled_at = Column(DateTime, nullable=True)

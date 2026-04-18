@@ -153,7 +153,6 @@ export default function ContactsPage() {
             </button>
           </div>
         ),
-        right: true,
         width: '140px',
       },
     ],

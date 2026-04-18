@@ -87,3 +87,31 @@ export const users = {
   list: () => api.get('/users'),
   get: (id: number) => api.get(`/users/${id}`),
 };
+
+export const googleCalendar = {
+  status: () => api.get('/google-calendar/credentials'),
+  saveCredentials: (data: { oauth_credentials?: any; test_email?: string }) =>
+    api.post('/google-calendar/credentials', data),
+  oauthAuthorize: (redirect_uri?: string) =>
+    api.post('/google-calendar/oauth/authorize',
+      redirect_uri ? { redirect_uri } : {}),
+  oauthComplete: (code: string, redirect_uri?: string, state?: string) =>
+    api.post('/google-calendar/oauth/complete', {
+      code,
+      redirect_uri,
+      state,
+    }),
+  clearCredentials: () => api.delete('/google-calendar/credentials'),
+  listEvents: (params?: any) => api.get('/google-calendar/events', { params }),
+  createEvent: (data: any, params?: any) =>
+    api.post('/google-calendar/events', data, { params }),
+  updateEvent: (id: string, data: any, params?: any) =>
+    api.put(`/google-calendar/events/${id}`, data, { params }),
+  deleteEvent: (id: string, params?: any) =>
+    api.delete(`/google-calendar/events/${id}`, { params }),
+  listCalendars: () => api.get('/google-calendar/gcal/users/me/calendarList'),
+  createCalendar: (data: any) => api.post('/google-calendar/calendar', data),
+  updateCalendar: (id: string, data: any) =>
+    api.put(`/google-calendar/calendar/${id}`, data),
+  deleteCalendar: (id: string) => api.delete(`/google-calendar/calendar/${id}`),
+};

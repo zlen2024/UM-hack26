@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from database import engine, Base
 from routes import (
     auth,
@@ -10,19 +11,33 @@ from routes import (
     reports,
     users,
     agent,
+    google_calendar,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_activity_columns() -> None:
+    with engine.begin() as conn:
+        result = conn.execute(text("PRAGMA table_info(activities)")).fetchall()
+        columns = {row[1] for row in result}
+        if "source" not in columns:
+            conn.execute(text("ALTER TABLE activities ADD COLUMN source TEXT"))
+        if "external_id" not in columns:
+            conn.execute(text("ALTER TABLE activities ADD COLUMN external_id TEXT"))
+
+
+ensure_activity_columns()
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
@@ -34,6 +49,9 @@ app.include_router(activities.router, prefix="/api/activities", tags=["activitie
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
+app.include_router(
+    google_calendar.router, prefix="/api/google-calendar", tags=["google-calendar"]
+)
 
 
 @app.get("/")
@@ -44,3 +62,8 @@ def root():
 @app.get("/api/health")
 def health():
     return {"status": "healthy"}
+
+
+@app.get("/api/test-google")
+def test_google():
+    return {"message": "Test route works!"}

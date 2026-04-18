@@ -183,3 +183,37 @@ class DashboardMetrics(BaseModel):
     leads_count: int
     qualified_count: int
     proposal_count: int
+
+
+class GoogleCalendarCredentials(BaseModel):
+    oauth_credentials: Optional[dict] = None
+    test_email: Optional[EmailStr] = None
+    api_key: Optional[str] = None
+
+
+class GoogleCalendarEventBase(BaseModel):
+    title: str
+    start_time: datetime
+    end_time: datetime
+    description: Optional[str] = None
+    attendees: Optional[List[EmailStr]] = None
+    contact_id: Optional[int] = None
+    opportunity_id: Optional[int] = None
+
+
+class GoogleCalendarEventCreate(GoogleCalendarEventBase):
+    pass
+
+
+class GoogleCalendarEventUpdate(BaseModel):
+    title: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    description: Optional[str] = None
+    attendees: Optional[List[EmailStr]] = None
+    contact_id: Optional[int] = None
+    opportunity_id: Optional[int] = None
+
+
+class GoogleCalendarEventResponse(GoogleCalendarEventBase):
+    id: str

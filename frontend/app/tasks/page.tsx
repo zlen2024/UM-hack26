@@ -264,7 +264,6 @@ export default function TasksPage() {
             </button>
           </div>
         ),
-        right: true,
         width: '140px',
       },
     ],
