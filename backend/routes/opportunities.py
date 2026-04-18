@@ -18,7 +18,7 @@ def get_opportunities(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Opportunity).filter(Opportunity.user_id == current_user.id)
+    query = db.query(Opportunity)
     if stage:
         query = query.filter(Opportunity.stage == stage)
     if assigned_to:
@@ -32,13 +32,7 @@ def get_opportunity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    opportunity = (
-        db.query(Opportunity)
-        .filter(
-            Opportunity.id == opportunity_id, Opportunity.user_id == current_user.id
-        )
-        .first()
-    )
+    opportunity = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
     if not opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return opportunity
@@ -64,13 +58,7 @@ def update_opportunity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_opportunity = (
-        db.query(Opportunity)
-        .filter(
-            Opportunity.id == opportunity_id, Opportunity.user_id == current_user.id
-        )
-        .first()
-    )
+    db_opportunity = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
     if not db_opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
 
@@ -93,13 +81,7 @@ def update_opportunity_stage(
     if stage not in STAGES:
         raise HTTPException(status_code=400, detail="Invalid stage")
 
-    db_opportunity = (
-        db.query(Opportunity)
-        .filter(
-            Opportunity.id == opportunity_id, Opportunity.user_id == current_user.id
-        )
-        .first()
-    )
+    db_opportunity = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
     if not db_opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
 
@@ -114,13 +96,7 @@ def delete_opportunity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_opportunity = (
-        db.query(Opportunity)
-        .filter(
-            Opportunity.id == opportunity_id, Opportunity.user_id == current_user.id
-        )
-        .first()
-    )
+    db_opportunity = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
     if not db_opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
 

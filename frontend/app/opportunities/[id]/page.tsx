@@ -7,10 +7,10 @@ import { ArrowLeft, Save, DollarSign, Calendar, User } from 'lucide-react';
 
 const STAGES = [
   { id: 'lead', label: 'Lead', color: 'bg-blue-500' },
-  { id: 'qualified', label: 'Qualified', color: 'bg-cyan-500' },
-  { id: 'proposal', label: 'Proposal', color: 'bg-purple-500' },
-  { id: 'won', label: 'Won', color: 'bg-green-500' },
-  { id: 'lost', label: 'Lost', color: 'bg-red-500' },
+  { id: 'qualified', label: 'Qualified', color: 'bg-indigo-500' },
+  { id: 'proposal', label: 'Proposal', color: 'bg-amber-500' },
+  { id: 'won', label: 'Won', color: 'bg-blue-700' },
+  { id: 'lost', label: 'Lost', color: 'bg-rose-500' },
 ];
 
 export default function OpportunityDetailPage() {
@@ -80,7 +80,7 @@ export default function OpportunityDetailPage() {
       <div className="flex">
         <Sidebar />
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-slate-500">Loading...</div>
+          <div className="text-muted">Loading...</div>
         </div>
       </div>
     );
@@ -89,19 +89,20 @@ export default function OpportunityDetailPage() {
   const currentStage = STAGES.find((s) => s.id === opportunity?.stage);
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <Sidebar />
-      <div className="flex-1 p-8">
+      <div className="flex-1 p-6 lg:p-10">
         <div className="flex items-center gap-4 mb-6">
-          <button onClick={() => router.push('/opportunities')} className="p-2 hover:bg-slate-200 rounded-lg">
-            <ArrowLeft size={20} className="text-slate-600" />
+          <button onClick={() => router.push('/opportunities')} className="p-2 hover:bg-wash rounded-xl">
+            <ArrowLeft size={20} className="text-muted" />
           </button>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold text-slate-800">{opportunity?.title}</h1>
+            <div className="page-kicker">Opportunity</div>
+            <h1 className="page-title mt-2">{opportunity?.title}</h1>
           </div>
           {editMode ? (
             <button onClick={handleSave} className="btn-primary flex items-center gap-2">
-              <Save size={20} />
+              <Save size={18} />
               Save
             </button>
           ) : (
@@ -113,11 +114,11 @@ export default function OpportunityDetailPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <div className="card">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Opportunity Details</h2>
+            <div className="card card-elevated">
+              <h2 className="text-xl font-semibold text-ink mb-4">Opportunity Details</h2>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Title</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Title</label>
                   {editMode ? (
                     <input
                       type="text"
@@ -126,11 +127,11 @@ export default function OpportunityDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <p className="text-slate-800">{opportunity?.title}</p>
+                    <p className="text-ink">{opportunity?.title}</p>
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Value</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Value</label>
                   {editMode ? (
                     <input
                       type="number"
@@ -139,14 +140,14 @@ export default function OpportunityDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <div className="flex items-center gap-2 text-2xl font-bold text-primary">
+                    <div className="flex items-center gap-2 text-2xl font-semibold text-blue-700">
                       <DollarSign size={24} />
                       {parseFloat(opportunity?.value || 0).toLocaleString()}
                     </div>
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Stage</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Stage</label>
                   {editMode ? (
                     <select
                       value={formData.stage}
@@ -162,12 +163,12 @@ export default function OpportunityDetailPage() {
                   ) : (
                     <div className="flex items-center gap-2">
                       <div className={`w-3 h-3 rounded-full ${currentStage?.color}`} />
-                      <span className="text-slate-800">{currentStage?.label}</span>
+                      <span className="text-ink">{currentStage?.label}</span>
                     </div>
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Contact</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Contact</label>
                   {editMode ? (
                     <select
                       value={formData.contact_id}
@@ -182,7 +183,7 @@ export default function OpportunityDetailPage() {
                       ))}
                     </select>
                   ) : (
-                    <p className="text-slate-800">
+                    <p className="text-ink">
                       {opportunity?.contact_id
                         ? contactsList.find((c) => c.id === opportunity.contact_id)?.name || '-'
                         : '-'}
@@ -190,7 +191,7 @@ export default function OpportunityDetailPage() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Expected Close Date</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Expected Close Date</label>
                   {editMode ? (
                     <input
                       type="date"
@@ -199,8 +200,8 @@ export default function OpportunityDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <div className="flex items-center gap-2 text-slate-800">
-                      <Calendar size={16} className="text-slate-400" />
+                    <div className="flex items-center gap-2 text-ink">
+                      <Calendar size={16} className="text-muted" />
                       {opportunity?.expected_close_date
                         ? new Date(opportunity.expected_close_date).toLocaleDateString()
                         : '-'}
@@ -212,18 +213,18 @@ export default function OpportunityDetailPage() {
           </div>
 
           <div className="space-y-6">
-            <div className="card">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Status</h2>
+            <div className="card card-elevated">
+              <h2 className="text-xl font-semibold text-ink mb-4">Status</h2>
               <div className="space-y-2">
                 {STAGES.map((stage) => (
                   <div
                     key={stage.id}
-                    className={`p-3 rounded-lg flex items-center gap-3 ${
-                      opportunity?.stage === stage.id ? 'bg-slate-100' : 'bg-slate-50'
+                    className={`p-3 rounded-2xl flex items-center gap-3 ${
+                      opportunity?.stage === stage.id ? 'bg-wash' : 'bg-white/70'
                     }`}
                   >
                     <div className={`w-3 h-3 rounded-full ${stage.color}`} />
-                    <span className="text-slate-800">{stage.label}</span>
+                    <span className="text-ink">{stage.label}</span>
                   </div>
                 ))}
               </div>

@@ -16,7 +16,7 @@ def get_activities(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Activity).filter(Activity.user_id == current_user.id)
+    query = db.query(Activity)
     if contact_id:
         query = query.filter(Activity.contact_id == contact_id)
     if opportunity_id:
@@ -30,11 +30,7 @@ def get_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    activity = (
-        db.query(Activity)
-        .filter(Activity.id == activity_id, Activity.user_id == current_user.id)
-        .first()
-    )
+    activity = db.query(Activity).filter(Activity.id == activity_id).first()
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
     return activity
@@ -60,11 +56,7 @@ def update_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_activity = (
-        db.query(Activity)
-        .filter(Activity.id == activity_id, Activity.user_id == current_user.id)
-        .first()
-    )
+    db_activity = db.query(Activity).filter(Activity.id == activity_id).first()
     if not db_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
@@ -83,11 +75,7 @@ def delete_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_activity = (
-        db.query(Activity)
-        .filter(Activity.id == activity_id, Activity.user_id == current_user.id)
-        .first()
-    )
+    db_activity = db.query(Activity).filter(Activity.id == activity_id).first()
     if not db_activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 

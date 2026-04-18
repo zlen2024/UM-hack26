@@ -1,13 +1,16 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { reports, auth } from '@/lib/api';
-import { Users, Building2, CheckSquare, DollarSign, TrendingUp, Clock } from 'lucide-react';
+import { reports, tasks as tasksApi, opportunities as opportunitiesApi } from '@/lib/api';
+import { Users, CheckSquare, DollarSign, TrendingUp, Clock, Sparkles, Target } from 'lucide-react';
 
 export default function DashboardPage() {
   const router = useRouter();
   const [metrics, setMetrics] = useState<any>(null);
+  const [pipeline, setPipeline] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [opportunities, setOpportunities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -21,8 +24,16 @@ export default function DashboardPage() {
 
   const loadDashboard = async () => {
     try {
-      const res = await reports.dashboard();
-      setMetrics(res.data);
+      const [metricsRes, pipelineRes, tasksRes, oppsRes] = await Promise.all([
+        reports.dashboard(),
+        reports.pipeline(),
+        tasksApi.list(),
+        opportunitiesApi.list(),
+      ]);
+      setMetrics(metricsRes.data);
+      setPipeline(pipelineRes.data);
+      setTasks(tasksRes.data);
+      setOpportunities(oppsRes.data);
     } catch (err) {
       console.error(err);
     } finally {
@@ -30,71 +41,125 @@ export default function DashboardPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex">
-        <Sidebar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-slate-500">Loading...</div>
-        </div>
-      </div>
-    );
-  }
-
   const statCards = [
     {
       label: 'Total Contacts',
       value: metrics?.total_contacts || 0,
       icon: Users,
-      color: 'bg-blue-500',
+      tone: 'from-blue-600 to-indigo-700',
+      detail: 'People in your CRM',
     },
     {
       label: 'Pipeline Value',
       value: `$${(metrics?.pipeline_value || 0).toLocaleString()}`,
       icon: DollarSign,
-      color: 'bg-green-500',
+      tone: 'from-sky-500 to-blue-600',
+      detail: 'Active revenue in flight',
     },
     {
       label: 'Won Value',
       value: `$${(metrics?.won_value || 0).toLocaleString()}`,
       icon: TrendingUp,
-      color: 'bg-emerald-500',
+      tone: 'from-indigo-600 to-blue-700',
+      detail: 'Closed this cycle',
     },
     {
       label: 'Open Tasks',
       value: metrics?.open_tasks || 0,
       icon: CheckSquare,
-      color: 'bg-amber-500',
+      tone: 'from-slate-600 to-blue-600',
+      detail: 'Still in motion',
     },
   ];
 
-  const pipelineStages = [
-    { label: 'Leads', count: metrics?.leads_count || 0, color: 'bg-blue-500' },
-    { label: 'Qualified', count: metrics?.qualified_count || 0, color: 'bg-cyan-500' },
-    { label: 'Proposal', count: metrics?.proposal_count || 0, color: 'bg-purple-500' },
-  ];
+  const stagePalette: Record<string, string> = {
+    lead: '#38bdf8',
+    qualified: '#6366f1',
+    proposal: '#f59e0b',
+    won: '#2563eb',
+    lost: '#ef4444',
+  };
+
+  const pipelineTotal = pipeline.reduce(
+    (sum, stage) => sum + Number(stage.total_value || 0),
+    0
+  );
+
+  const donutGradient = useMemo(() => {
+    if (!pipelineTotal) return 'conic-gradient(#e2e8f0 0deg 360deg)';
+    let current = 0;
+    const segments = pipeline.map((stage) => {
+      const value = Number(stage.total_value || 0);
+      const angle = (value / pipelineTotal) * 360;
+      const color = stagePalette[stage.stage] || '#94a3b8';
+      const start = current;
+      const end = current + angle;
+      current = end;
+      return `${color} ${start}deg ${end}deg`;
+    });
+    return `conic-gradient(${segments.join(', ')})`;
+  }, [pipeline, pipelineTotal]);
+
+  const nextTasks = useMemo(() => {
+    return [...tasks]
+      .filter((task) => task.status !== 'completed')
+      .sort((a, b) => {
+        const aTime = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+        const bTime = b.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+        return aTime - bTime;
+      })
+      .slice(0, 5);
+  }, [tasks]);
+
+  const topOpportunities = useMemo(() => {
+    return [...opportunities]
+      .sort((a, b) => Number(b.value || 0) - Number(a.value || 0))
+      .slice(0, 5);
+  }, [opportunities]);
+
+  if (loading) {
+    return (
+      <div className="flex">
+        <Sidebar />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-muted">Loading...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <Sidebar />
-      <div className="flex-1 p-8">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
-          <p className="text-slate-500">Welcome back!</p>
+      <div className="flex-1 p-6 lg:p-10">
+        <div className="mb-10 animate-fade-up">
+          <div className="flex items-center gap-3 page-kicker">
+            <Sparkles size={16} className="text-blue-600" />
+            Momentum snapshot
+          </div>
+          <h1 className="page-title mt-3">Dashboard</h1>
+          <p className="text-muted mt-2">
+            Track your shared pipeline, priorities, and next actions.
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
           {statCards.map((stat, i) => {
             const Icon = stat.icon;
             return (
-              <div key={i} className="card">
+              <div
+                key={i}
+                className="card card-elevated animate-fade-up"
+                style={{ animationDelay: `${i * 0.05}s` }}
+              >
                 <div className="flex items-center gap-4">
-                  <div className={`p-3 rounded-lg ${stat.color}`}>
-                    <Icon className="text-white" size={24} />
+                  <div className={`p-3 rounded-2xl bg-gradient-to-br ${stat.tone} text-white shadow-soft`}>
+                    <Icon className="text-white" size={22} />
                   </div>
                   <div>
-                    <p className="text-sm text-slate-500">{stat.label}</p>
-                    <p className="text-2xl font-bold text-slate-800">{stat.value}</p>
+                    <p className="text-xs uppercase tracking-[0.2em] text-muted">{stat.label}</p>
+                    <p className="text-2xl font-semibold text-ink mt-1">{stat.value}</p>
+                    <p className="text-xs text-muted mt-1">{stat.detail}</p>
                   </div>
                 </div>
               </div>
@@ -102,25 +167,124 @@ export default function DashboardPage() {
           })}
         </div>
 
-        <div className="card">
-          <h2 className="text-lg font-semibold text-slate-800 mb-4">Pipeline Overview</h2>
-          <div className="space-y-4">
-            {pipelineStages.map((stage, i) => (
-              <div key={i}>
-                <div className="flex justify-between text-sm mb-1">
-                  <span className="text-slate-600">{stage.label}</span>
-                  <span className="font-medium text-slate-800">{stage.count}</span>
-                </div>
-                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full ${stage.color} rounded-full`}
-                    style={{
-                      width: `${metrics?.total_opportunities ? (stage.count / metrics.total_opportunities) * 100 : 0}%`,
-                    }}
-                  />
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-10">
+          <div className="card card-elevated xl:col-span-2">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <div className="page-kicker">Revenue lens</div>
+                <h2 className="text-xl font-semibold text-ink">Pipeline Mix</h2>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-muted">
+                <Target size={16} />
+                ${pipelineTotal.toLocaleString()}
+              </div>
+            </div>
+            <div className="flex flex-col md:flex-row gap-6">
+              <div className="flex items-center justify-center">
+                <div
+                  className="w-40 h-40 rounded-full relative"
+                  style={{ background: donutGradient }}
+                >
+                  <div className="absolute inset-4 bg-white rounded-full flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="text-xl font-semibold text-ink">
+                        {metrics?.total_opportunities || 0}
+                      </div>
+                      <div className="text-xs text-muted">Opportunities</div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            ))}
+              <div className="flex-1 space-y-3">
+                {pipeline.map((stage) => (
+                  <div key={stage.stage} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: stagePalette[stage.stage] || '#94a3b8' }}
+                      />
+                      <span className="capitalize text-ink">{stage.stage}</span>
+                    </div>
+                    <div className="text-sm text-muted">
+                      ${Number(stage.total_value || 0).toLocaleString()} ({stage.count})
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="card card-elevated">
+            <div className="page-kicker">Priority queue</div>
+            <h2 className="text-xl font-semibold text-ink mb-4">Next Actions</h2>
+            {nextTasks.length === 0 ? (
+              <div className="text-muted text-sm">No open tasks yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {nextTasks.map((task) => (
+                  <div key={task.id} className="flex items-start justify-between rounded-2xl bg-wash px-3 py-2">
+                    <div>
+                      <div className="text-sm font-semibold text-ink">{task.title}</div>
+                      <div className="text-xs text-muted">
+                        {task.due_date ? new Date(task.due_date).toLocaleDateString() : 'No due date'}
+                      </div>
+                    </div>
+                    <span className="text-xs text-muted uppercase tracking-[0.2em]">{task.priority}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="card card-elevated">
+            <div className="page-kicker">High value</div>
+            <h2 className="text-xl font-semibold text-ink mb-4">Top Opportunities</h2>
+            {topOpportunities.length === 0 ? (
+              <div className="text-muted text-sm">No opportunities yet.</div>
+            ) : (
+              <div className="space-y-3">
+                {topOpportunities.map((opp) => (
+                  <div key={opp.id} className="flex items-center justify-between rounded-2xl bg-wash px-3 py-2">
+                    <div>
+                      <div className="text-sm font-semibold text-ink">{opp.title}</div>
+                      <div className="text-xs text-muted uppercase tracking-[0.2em]">{opp.stage}</div>
+                    </div>
+                    <div className="text-sm font-semibold text-blue-700">
+                      ${Number(opp.value || 0).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="card card-elevated">
+            <div className="page-kicker">Operating tempo</div>
+            <h2 className="text-xl font-semibold text-ink mb-4">Workload Pulse</h2>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm rounded-2xl bg-wash px-3 py-2">
+                <div className="flex items-center gap-2 text-muted">
+                  <Clock size={16} />
+                  Open tasks
+                </div>
+                <span className="font-semibold text-ink">{metrics?.open_tasks || 0}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm rounded-2xl bg-wash px-3 py-2">
+                <div className="flex items-center gap-2 text-muted">
+                  <Users size={16} />
+                  Contacts
+                </div>
+                <span className="font-semibold text-ink">{metrics?.total_contacts || 0}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm rounded-2xl bg-wash px-3 py-2">
+                <div className="flex items-center gap-2 text-muted">
+                  <TrendingUp size={16} />
+                  Opportunities
+                </div>
+                <span className="font-semibold text-ink">{metrics?.total_opportunities || 0}</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

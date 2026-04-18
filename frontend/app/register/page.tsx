@@ -28,67 +28,97 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="w-full max-w-md p-8 bg-white rounded-xl shadow-sm border border-slate-200">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-slate-800">Create Account</h1>
-          <p className="text-slate-500 mt-1">Get started with UM CRM</p>
+    <div className="min-h-screen grid lg:grid-cols-[1.1fr,0.9fr]">
+      <div className="relative hidden lg:flex flex-col justify-between p-12 text-white overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-indigo-800 to-sky-500" />
+        <div className="absolute -top-24 -right-16 w-72 h-72 bg-white/20 rounded-full blur-3xl" />
+        <div className="absolute bottom-10 -left-12 w-64 h-64 bg-white/15 rounded-full blur-3xl" />
+        <div className="relative z-10">
+          <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs uppercase tracking-[0.3em]">
+            UM CRM
+          </div>
+          <h1 className="mt-6 text-4xl font-semibold leading-tight">
+            Build a unified client story.
+          </h1>
+          <p className="mt-4 text-base text-white/80 max-w-md">
+            Launch your workspace with shared pipelines, crisp reporting, and clear ownership.
+          </p>
         </div>
-        
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>
-        )}
-        
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="input-field"
-              placeholder="John Doe"
-              required
-            />
+        <div className="relative z-10 grid grid-cols-3 gap-4">
+          {[
+            { label: 'Momentum', value: 'Shared focus' },
+            { label: 'Signals', value: 'Instant insight' },
+            { label: 'Flow', value: 'Clean handoffs' },
+          ].map((item) => (
+            <div key={item.label} className="rounded-2xl bg-white/15 px-4 py-3">
+              <div className="text-xs uppercase tracking-[0.25em] text-white/70">{item.label}</div>
+              <div className="mt-1 text-lg font-semibold">{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-center p-6 sm:p-10">
+        <div className="w-full max-w-md card card-elevated animate-fade-up">
+          <div className="mb-6">
+            <div className="page-kicker">Get started</div>
+            <h1 className="page-title mt-2">Create account</h1>
+            <p className="text-muted mt-2">Set up your profile and start closing deals.</p>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="input-field"
-              placeholder="you@example.com"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="input-field"
-              placeholder="••••••••"
-              required
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full btn-primary disabled:opacity-50"
-          >
-            {loading ? 'Creating account...' : 'Create Account'}
-          </button>
-        </form>
-        
-        <div className="mt-6 text-center">
-          <p className="text-sm text-slate-500">
+
+          {error && (
+            <div className="mb-4 p-3 rounded-xl bg-rose-50 text-rose-700 text-sm">{error}</div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Full Name</label>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                className="input-field"
+                placeholder="John Doe"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="input-field"
+                placeholder="you@example.com"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="input-field"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full btn-primary disabled:opacity-60"
+            >
+              {loading ? 'Creating account...' : 'Create Account'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center text-sm text-muted">
             Already have an account?{' '}
-            <a href="/" className="text-primary hover:underline">
+            <a href="/" className="font-semibold text-ink hover:underline">
               Sign In
             </a>
-          </p>
+          </div>
         </div>
       </div>
     </div>

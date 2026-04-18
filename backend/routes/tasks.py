@@ -16,7 +16,7 @@ def get_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Task).filter(Task.user_id == current_user.id)
+    query = db.query(Task)
     if status:
         query = query.filter(Task.status == status)
     if assigned_to:
@@ -30,11 +30,7 @@ def get_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    task = (
-        db.query(Task)
-        .filter(Task.id == task_id, Task.user_id == current_user.id)
-        .first()
-    )
+    task = db.query(Task).filter(Task.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
@@ -60,11 +56,7 @@ def update_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_task = (
-        db.query(Task)
-        .filter(Task.id == task_id, Task.user_id == current_user.id)
-        .first()
-    )
+    db_task = db.query(Task).filter(Task.id == task_id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -88,11 +80,7 @@ def update_task_status(
     if status not in valid_statuses:
         raise HTTPException(status_code=400, detail="Invalid status")
 
-    db_task = (
-        db.query(Task)
-        .filter(Task.id == task_id, Task.user_id == current_user.id)
-        .first()
-    )
+    db_task = db.query(Task).filter(Task.id == task_id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
 
@@ -107,11 +95,7 @@ def delete_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_task = (
-        db.query(Task)
-        .filter(Task.id == task_id, Task.user_id == current_user.id)
-        .first()
-    )
+    db_task = db.query(Task).filter(Task.id == task_id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
 

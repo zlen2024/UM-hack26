@@ -28,36 +28,37 @@ export default function SettingsPage() {
       <div className="flex">
         <Sidebar />
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-slate-500">Loading...</div>
+          <div className="text-muted">Loading...</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <Sidebar />
-      <div className="flex-1 p-8">
+      <div className="flex-1 p-6 lg:p-10">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-800">Settings</h1>
-          <p className="text-slate-500">Manage your account</p>
+          <div className="page-kicker">Account</div>
+          <h1 className="page-title mt-2">Settings</h1>
+          <p className="text-muted mt-2">Manage your profile and connections.</p>
         </div>
 
         <div className="max-w-2xl space-y-6">
-          <div className="card">
-            <h2 className="text-lg font-semibold text-slate-800 mb-4">Profile</h2>
+          <div className="card card-elevated">
+            <h2 className="text-xl font-semibold text-ink mb-4">Profile</h2>
             <div className="flex items-center gap-4 mb-6">
-              <div className="w-16 h-16 bg-primary rounded-full flex items-center justify-center">
-                <User size={32} className="text-white" />
+              <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl flex items-center justify-center shadow-soft">
+                <User size={30} className="text-white" />
               </div>
               <div>
-                <p className="font-medium text-slate-800">{user?.full_name || 'User'}</p>
-                <p className="text-sm text-slate-500">{user?.email}</p>
+                <p className="font-semibold text-ink">{user?.full_name || 'User'}</p>
+                <p className="text-sm text-muted">{user?.email}</p>
               </div>
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
+                <label className="block text-sm font-semibold text-ink mb-1">Full Name</label>
                 <input
                   type="text"
                   defaultValue={user?.full_name || ''}
@@ -65,7 +66,7 @@ export default function SettingsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                <label className="block text-sm font-semibold text-ink mb-1">Email</label>
                 <input
                   type="email"
                   defaultValue={user?.email || ''}
@@ -76,32 +77,32 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div className="card">
-            <h2 className="text-lg font-semibold text-slate-800 mb-4">Integrations</h2>
+          <div className="card card-elevated">
+            <h2 className="text-xl font-semibold text-ink mb-4">Integrations</h2>
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
+              <div className="flex items-center justify-between p-4 bg-wash rounded-2xl">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
-                    <Mail size={20} className="text-slate-600" />
+                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-soft">
+                    <Mail size={20} className="text-muted" />
                   </div>
                   <div>
-                    <p className="font-medium text-slate-800">Email</p>
-                    <p className="text-sm text-slate-500">Connect your email</p>
+                    <p className="font-semibold text-ink">Email</p>
+                    <p className="text-sm text-muted">Connect your email</p>
                   </div>
                 </div>
-                <button className="text-primary hover:underline text-sm">Connect</button>
+                <button className="btn-ghost text-sm">Connect</button>
               </div>
-              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
+              <div className="flex items-center justify-between p-4 bg-wash rounded-2xl">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
-                    <Calendar size={20} className="text-slate-600" />
+                  <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-soft">
+                    <Calendar size={20} className="text-muted" />
                   </div>
                   <div>
-                    <p className="font-medium text-slate-800">Calendar</p>
-                    <p className="text-sm text-slate-500">Sync with calendar</p>
+                    <p className="font-semibold text-ink">Calendar</p>
+                    <p className="text-sm text-muted">Sync with calendar</p>
                   </div>
                 </div>
-                <button className="text-primary hover:underline text-sm">Connect</button>
+                <button className="btn-ghost text-sm">Connect</button>
               </div>
             </div>
           </div>

@@ -62,26 +62,27 @@ export default function ContactDetailPage() {
       <div className="flex">
         <Sidebar />
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-slate-500">Loading...</div>
+          <div className="text-muted">Loading...</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <Sidebar />
-      <div className="flex-1 p-8">
+      <div className="flex-1 p-6 lg:p-10">
         <div className="flex items-center gap-4 mb-6">
-          <button onClick={() => router.push('/contacts')} className="p-2 hover:bg-slate-200 rounded-lg">
-            <ArrowLeft size={20} className="text-slate-600" />
+          <button onClick={() => router.push('/contacts')} className="p-2 hover:bg-wash rounded-xl">
+            <ArrowLeft size={20} className="text-muted" />
           </button>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold text-slate-800">{contact?.name}</h1>
+            <div className="page-kicker">Contact Profile</div>
+            <h1 className="page-title mt-2">{contact?.name}</h1>
           </div>
           {editMode ? (
             <button onClick={handleSave} className="btn-primary flex items-center gap-2">
-              <Save size={20} />
+              <Save size={18} />
               Save
             </button>
           ) : (
@@ -93,11 +94,11 @@ export default function ContactDetailPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <div className="card">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Contact Details</h2>
+            <div className="card card-elevated">
+              <h2 className="text-xl font-semibold text-ink mb-4">Contact Details</h2>
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
-                  <User size={20} className="text-slate-400" />
+                  <User size={20} className="text-muted" />
                   {editMode ? (
                     <input
                       type="text"
@@ -106,11 +107,11 @@ export default function ContactDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <span className="text-slate-800">{contact?.name}</span>
+                    <span className="text-ink">{contact?.name}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  <Mail size={20} className="text-slate-400" />
+                  <Mail size={20} className="text-muted" />
                   {editMode ? (
                     <input
                       type="email"
@@ -119,11 +120,11 @@ export default function ContactDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <span className="text-slate-800">{contact?.email || '-'}</span>
+                    <span className="text-ink">{contact?.email || '-'}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  <Phone size={20} className="text-slate-400" />
+                  <Phone size={20} className="text-muted" />
                   {editMode ? (
                     <input
                       type="text"
@@ -132,11 +133,11 @@ export default function ContactDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <span className="text-slate-800">{contact?.phone || '-'}</span>
+                    <span className="text-ink">{contact?.phone || '-'}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  <Building size={20} className="text-slate-400" />
+                  <Building size={20} className="text-muted" />
                   {editMode ? (
                     <input
                       type="text"
@@ -145,14 +146,14 @@ export default function ContactDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <span className="text-slate-800">{contact?.company || '-'}</span>
+                    <span className="text-ink">{contact?.company || '-'}</span>
                   )}
                 </div>
               </div>
             </div>
 
-            <div className="card">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Notes</h2>
+            <div className="card card-elevated">
+              <h2 className="text-xl font-semibold text-ink mb-4">Notes</h2>
               {editMode ? (
                 <textarea
                   value={formData.notes}
@@ -161,23 +162,23 @@ export default function ContactDetailPage() {
                   rows={4}
                 />
               ) : (
-                <p className="text-slate-600">{contact?.notes || 'No notes'}</p>
+                <p className="text-muted">{contact?.notes || 'No notes'}</p>
               )}
             </div>
           </div>
 
           <div className="space-y-6">
-            <div className="card">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Activity</h2>
+            <div className="card card-elevated">
+              <h2 className="text-xl font-semibold text-ink mb-4">Activity</h2>
               {activities.length === 0 ? (
-                <p className="text-slate-500 text-sm">No activity yet</p>
+                <p className="text-muted text-sm">No activity yet</p>
               ) : (
                 <div className="space-y-3">
                   {activities.map((activity) => (
-                    <div key={activity.id} className="border-l-2 border-primary pl-3">
-                      <p className="text-sm font-medium text-slate-800 capitalize">{activity.type}</p>
-                      <p className="text-xs text-slate-500">{activity.description}</p>
-                      <p className="text-xs text-slate-400">
+                    <div key={activity.id} className="rounded-2xl bg-wash px-3 py-2">
+                      <p className="text-sm font-semibold text-ink capitalize">{activity.type}</p>
+                      <p className="text-xs text-muted">{activity.description}</p>
+                      <p className="text-xs text-muted">
                         {new Date(activity.created_at).toLocaleDateString()}
                       </p>
                     </div>
