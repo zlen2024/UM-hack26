@@ -19,7 +19,7 @@ app = FastAPI(title="UM CRM API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "https://um-hack26-zf1hkq.fly.dev"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

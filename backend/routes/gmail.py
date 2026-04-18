@@ -30,10 +30,24 @@ def authorize_gmail(request: Request, payload: Optional[dict] = None, current_us
 
     try:
         config = oauth_config.get("web") or oauth_config.get("installed")
-        # We assume the frontend callback URL for Gmail is http://localhost:3000/api/auth/callback/google
-        scheme = request.headers.get("x-forwarded-proto", "http" if "localhost" in request.url.netloc else "https")
-        host = request.headers.get("x-forwarded-host", request.url.netloc)
-        redirect_uri = f"{scheme}://{host}/api/auth/callback/google"
+
+        origin = request.headers.get("origin")
+        referer = request.headers.get("referer")
+
+        if origin:
+            base_url = origin
+        elif referer:
+            parts = referer.split("/")
+            base_url = f"{parts[0]}//{parts[2]}"
+        else:
+            scheme = request.headers.get("x-forwarded-proto", "http" if "localhost" in request.url.netloc else "https")
+            host = request.headers.get("x-forwarded-host", request.url.netloc)
+            base_url = f"{scheme}://{host}"
+
+        if "um-hack26" in base_url or "fly.dev" in base_url or ("localhost" not in base_url and "127.0.0.1" not in base_url):
+            base_url = "https://um-hack26-zf1hkq.fly.dev"
+
+        redirect_uri = f"{base_url}/api/auth/callback/google"
 
         client_id = config.get("client_id")
 
@@ -46,43 +60,25 @@ def authorize_gmail(request: Request, payload: Optional[dict] = None, current_us
             oauth_config,
             scopes=GMAIL_SCOPES,
         )
+
+        origin = request.headers.get("origin")
+        referer = request.headers.get("referer")
+
+        if origin:
+            base_url = origin
+        elif referer:
+            parts = referer.split("/")
+            base_url = f"{parts[0]}//{parts[2]}"
+        else:
+            scheme = request.headers.get("x-forwarded-proto", "http" if "localhost" in request.url.netloc else "https")
+            host = request.headers.get("x-forwarded-host", request.url.netloc)
+            base_url = f"{scheme}://{host}"
+
+        if "um-hack26" in base_url or "fly.dev" in base_url or ("localhost" not in base_url and "127.0.0.1" not in base_url):
+            base_url = "https://um-hack26-zf1hkq.fly.dev"
+
+        redirect_uri = f"{base_url}/api/auth/callback/google"
         flow.redirect_uri = redirect_uri
-
-        auth_url, _ = flow.authorization_url(
-            access_type='offline',
-            include_granted_scopes='true',
-            prompt='consent',
-            state=state,
-            code_challenge=code_challenge,
-            code_challenge_method='S256'
-        )
-        return {"authorization_url": auth_url}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate auth url: {str(e)}")
-
-@router.post("/oauth/callback")
-def complete_gmail_oauth(request: Request, payload: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    code = payload.get("code")
-    state = payload.get("state")
-
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
-
-    oauth_config = _get_oauth_credentials()
-    if not oauth_config:
-        raise HTTPException(status_code=400, detail="OAuth2 credentials not configured")
-
-    state_data = OAUTH_STATE_STORE.pop(state, None) if state else None
-    code_verifier = state_data[0] if state_data else None
-
-    try:
-        flow = Flow.from_client_config(
-            oauth_config,
-            scopes=GMAIL_SCOPES,
-        )
-        flow.scheme = request.headers.get("x-forwarded-proto", "http" if "localhost" in request.url.netloc else "https")
-        host = request.headers.get("x-forwarded-host", request.url.netloc)
-        redirect_uri = f"{scheme}://{host}/api/auth/callback/google"
         flow.fetch_token(code=code, code_verifier=code_verifier)
         credentials = flow.credentials
 
