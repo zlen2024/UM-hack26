@@ -15,7 +15,7 @@ def get_contacts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Contact).filter(Contact.user_id == current_user.id)
+    query = db.query(Contact)
     if search:
         query = query.filter(
             (Contact.name.contains(search))
@@ -31,11 +31,7 @@ def get_contact(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    contact = (
-        db.query(Contact)
-        .filter(Contact.id == contact_id, Contact.user_id == current_user.id)
-        .first()
-    )
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
     return contact
@@ -61,11 +57,7 @@ def update_contact(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_contact = (
-        db.query(Contact)
-        .filter(Contact.id == contact_id, Contact.user_id == current_user.id)
-        .first()
-    )
+    db_contact = db.query(Contact).filter(Contact.id == contact_id).first()
     if not db_contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 
@@ -84,11 +76,7 @@ def delete_contact(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_contact = (
-        db.query(Contact)
-        .filter(Contact.id == contact_id, Contact.user_id == current_user.id)
-        .first()
-    )
+    db_contact = db.query(Contact).filter(Contact.id == contact_id).first()
     if not db_contact:
         raise HTTPException(status_code=404, detail="Contact not found")
 

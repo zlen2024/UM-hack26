@@ -19,15 +19,14 @@ def get_pipeline_report(
     results = []
 
     for stage in stages:
-        count = (
-            db.query(Opportunity)
-            .filter(Opportunity.user_id == current_user.id, Opportunity.stage == stage)
-            .count()
-        )
+        count = db.query(Opportunity).filter(Opportunity.stage == stage).count()
 
-        total = db.query(func.sum(Opportunity.value)).filter(
-            Opportunity.user_id == current_user.id, Opportunity.stage == stage
-        ).scalar() or Decimal("0")
+        total = (
+            db.query(func.sum(Opportunity.value))
+            .filter(Opportunity.stage == stage)
+            .scalar()
+            or Decimal("0")
+        )
 
         results.append(PipelineReport(stage=stage, count=count, total_value=total))
 
@@ -38,13 +37,11 @@ def get_pipeline_report(
 def get_contact_activity_report(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
-    contacts = db.query(Contact).filter(Contact.user_id == current_user.id).all()
+    contacts = db.query(Contact).all()
     results = []
 
     for contact in contacts:
-        activity_count = (
-            db.query(Activity).filter(Activity.contact_id == contact.id).count()
-        )
+        activity_count = db.query(Activity).filter(Activity.contact_id == contact.id).count()
 
         last_activity = (
             db.query(Activity)
@@ -70,48 +67,37 @@ def get_dashboard_metrics(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     total_contacts = (
-        db.query(Contact).filter(Contact.user_id == current_user.id).count()
+        db.query(Contact).count()
     )
 
     total_opportunities = (
-        db.query(Opportunity).filter(Opportunity.user_id == current_user.id).count()
+        db.query(Opportunity).count()
     )
 
     pipeline_value = db.query(func.sum(Opportunity.value)).filter(
-        Opportunity.user_id == current_user.id,
         Opportunity.stage.in_(["lead", "qualified", "proposal"]),
     ).scalar() or Decimal("0")
 
     won_value = db.query(func.sum(Opportunity.value)).filter(
-        Opportunity.user_id == current_user.id, Opportunity.stage == "won"
+        Opportunity.stage == "won"
     ).scalar() or Decimal("0")
 
-    total_tasks = db.query(Task).filter(Task.user_id == current_user.id).count()
+    total_tasks = db.query(Task).count()
 
     open_tasks = (
-        db.query(Task)
-        .filter(Task.user_id == current_user.id, Task.status != "completed")
-        .count()
+        db.query(Task).filter(Task.status != "completed").count()
     )
 
     leads_count = (
-        db.query(Opportunity)
-        .filter(Opportunity.user_id == current_user.id, Opportunity.stage == "lead")
-        .count()
+        db.query(Opportunity).filter(Opportunity.stage == "lead").count()
     )
 
     qualified_count = (
-        db.query(Opportunity)
-        .filter(
-            Opportunity.user_id == current_user.id, Opportunity.stage == "qualified"
-        )
-        .count()
+        db.query(Opportunity).filter(Opportunity.stage == "qualified").count()
     )
 
     proposal_count = (
-        db.query(Opportunity)
-        .filter(Opportunity.user_id == current_user.id, Opportunity.stage == "proposal")
-        .count()
+        db.query(Opportunity).filter(Opportunity.stage == "proposal").count()
     )
 
     return DashboardMetrics(
