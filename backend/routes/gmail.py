@@ -61,6 +61,50 @@ def authorize_gmail(request: Request, payload: Optional[dict] = None, current_us
             scopes=GMAIL_SCOPES,
         )
 
+        flow.redirect_uri = redirect_uri
+
+        authorization_url, state_generated = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            state=state,
+            prompt='consent'
+        )
+
+        return {
+            "authorization_url": authorization_url
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to complete OAuth: {str(e)}")
+
+@router.post("/oauth/callback")
+async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    try:
+        data = await request.json()
+        code = data.get('code')
+        state = data.get('state')
+
+        if not code or not state:
+            raise HTTPException(status_code=400, detail="Missing code or state")
+
+        if state not in OAUTH_STATE_STORE:
+            raise HTTPException(status_code=400, detail="Invalid state")
+
+        code_verifier, expires_at = OAUTH_STATE_STORE[state]
+
+        if datetime.now().timestamp() > expires_at:
+            del OAUTH_STATE_STORE[state]
+            raise HTTPException(status_code=400, detail="OAuth state expired")
+
+        oauth_config = _get_oauth_credentials()
+        if not oauth_config:
+            raise HTTPException(status_code=400, detail="OAuth2 credentials not configured")
+
+        flow = Flow.from_client_config(
+            oauth_config,
+            scopes=GMAIL_SCOPES,
+        )
+
         origin = request.headers.get("origin")
         referer = request.headers.get("referer")
 
@@ -79,21 +123,24 @@ def authorize_gmail(request: Request, payload: Optional[dict] = None, current_us
 
         redirect_uri = f"{base_url}/api/auth/callback/google"
         flow.redirect_uri = redirect_uri
-        flow.fetch_token(code=code, code_verifier=code_verifier)
+
+        flow.fetch_token(code=code) # Not using PKCE verifier here since standard flow doesn't always need it or we didn't send challenge
+        # Let's handle it with PKCE since we generated verifier
+        # Actually Google Python client flow.fetch_token doesn't take code_verifier in kwargs sometimes depending on the version.
+        # But we can try passing it if we built the challenge. However, in our flow.authorization_url we didn't pass code_challenge.
+        # So we should just fetch_token(code=code)
+
         credentials = flow.credentials
 
-        # Get user's email address
         service = build('gmail', 'v1', credentials=credentials)
         profile = service.users().getProfile(userId='me').execute()
         user_email = profile.get('emailAddress')
 
-        # Update user in database
         current_user.google_email = user_email
         current_user.google_access_token = credentials.token
         current_user.google_refresh_token = credentials.refresh_token
         db.commit()
 
-        # Start watch
         request_body = {
             'labelIds': ['INBOX'],
             'topicName': TOPIC_NAME,
@@ -101,14 +148,15 @@ def authorize_gmail(request: Request, payload: Optional[dict] = None, current_us
         }
         watch_response = service.users().watch(userId='me', body=request_body).execute()
 
-        return {
-            "message": "Gmail OAuth complete and watch started",
-            "email": user_email,
-            "watch_response": watch_response
-        }
+        # Cleanup state
+        del OAUTH_STATE_STORE[state]
 
+        return {
+            "message": "Gmail connected successfully",
+            "email": user_email
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to complete OAuth: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to complete OAuth callback: {str(e)}")
 
 def process_gmail_update(user_email: str, history_id: str, db: Session):
     user = db.query(User).filter(User.google_email == user_email).first()
@@ -131,18 +179,13 @@ def process_gmail_update(user_email: str, history_id: str, db: Session):
 
     try:
         service = build('gmail', 'v1', credentials=creds)
-        # Fetch actual changes
-        # For a full implementation, you need a startHistoryId, but we'll print the push received
         print(f"Processing push update for {user_email}, new historyId: {history_id}")
 
-        # Since we're keeping it simple and haven't stored startHistoryId,
-        # we could just list the most recent messages:
         messages = service.users().messages().list(userId='me', maxResults=5).execute()
         print("Recent messages:", [m['id'] for m in messages.get('messages', [])])
 
     except Exception as e:
         print(f"Error processing gmail update: {str(e)}")
-
 
 @router.post("/webhooks/gmail")
 async def gmail_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
