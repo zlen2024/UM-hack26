@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from scalar_fastapi import get_scalar_api_reference
 from database import engine, Base
 from routes import (
     auth,
@@ -11,7 +12,7 @@ from routes import (
     users,
 )
 
-app = FastAPI(title="UM CRM API", version="1.0.0")
+app = FastAPI(title="UM CRM API", version="1.0.0", docs_url=None, redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +38,14 @@ app.include_router(users.router, prefix="/api/users", tags=["users"])
 @app.get("/")
 def root():
     return {"message": "UM CRM API"}
+
+
+@app.get("/docs", include_in_schema=False)
+def scalar_docs():
+    return get_scalar_api_reference(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - API Reference",
+    )
 
 
 @app.get("/api/health")
