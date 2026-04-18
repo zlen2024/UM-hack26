@@ -31,48 +31,59 @@ export default function Sidebar() {
   };
 
   return (
-    <div className="w-60 h-screen bg-white border-r border-slate-200 flex flex-col">
-      <div className="p-4 border-b border-slate-200">
-        <h1 className="text-xl font-bold text-primary">UM CRM</h1>
+    <aside className="w-full md:w-72 md:h-screen md:sticky md:top-0">
+      <div className="panel h-full flex flex-col gap-4 md:gap-6 p-4 md:p-6">
+        <div className="flex items-center justify-between md:justify-start gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex items-center justify-center shadow-soft">
+              <span className="text-sm font-semibold">UM</span>
+            </div>
+            <div>
+              <div className="page-kicker">CRM</div>
+              <div className="text-lg font-semibold text-ink">Studio</div>
+            </div>
+          </div>
+          <span className="pill hidden md:inline-flex">All Teams</span>
+        </div>
+
+        <nav className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-2 md:pb-0">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`group flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
+                  isActive
+                    ? 'bg-blue-700 text-white shadow-soft'
+                    : 'text-muted hover:bg-white/70'
+                }`}
+              >
+                <Icon size={18} className={isActive ? 'text-white' : 'text-muted'} />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="mt-auto space-y-2">
+          <Link
+            href="/settings"
+            className="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold text-muted hover:bg-white/70 transition-colors"
+          >
+            <Settings size={18} />
+            Settings
+          </Link>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold text-rose-700 hover:bg-rose-50 transition-colors w-full"
+          >
+            <LogOut size={18} />
+            Logout
+          </button>
+        </div>
       </div>
-      
-      <nav className="flex-1 p-4 space-y-1">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-primary text-white'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <Icon size={20} />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-      
-      <div className="p-4 border-t border-slate-200 space-y-1">
-        <Link
-          href="/settings"
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
-        >
-          <Settings size={20} />
-          Settings
-        </Link>
-        <button
-          onClick={handleLogout}
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
-        >
-          <LogOut size={20} />
-          Logout
-        </button>
-      </div>
-    </div>
+    </aside>
   );
 }

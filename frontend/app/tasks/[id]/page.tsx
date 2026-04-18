@@ -7,14 +7,14 @@ import { ArrowLeft, Save, Calendar, Flag, CheckSquare } from 'lucide-react';
 
 const STATUSES = [
   { id: 'pending', label: 'Pending', color: 'bg-slate-500' },
-  { id: 'in_progress', label: 'In Progress', color: 'bg-blue-500' },
-  { id: 'completed', label: 'Completed', color: 'bg-green-500' },
+  { id: 'in_progress', label: 'In Progress', color: 'bg-sky-500' },
+  { id: 'completed', label: 'Completed', color: 'bg-blue-600' },
 ];
 
 const PRIORITIES = [
   { id: 'low', label: 'Low', color: 'text-slate-500' },
-  { id: 'medium', label: 'Medium', color: 'text-amber-500' },
-  { id: 'high', label: 'High', color: 'text-red-500' },
+  { id: 'medium', label: 'Medium', color: 'text-amber-600' },
+  { id: 'high', label: 'High', color: 'text-rose-600' },
 ];
 
 export default function TaskDetailPage() {
@@ -95,7 +95,7 @@ export default function TaskDetailPage() {
       <div className="flex">
         <Sidebar />
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-slate-500">Loading...</div>
+          <div className="text-muted">Loading...</div>
         </div>
       </div>
     );
@@ -105,19 +105,20 @@ export default function TaskDetailPage() {
   const currentPriority = PRIORITIES.find((p) => p.id === task?.priority);
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex flex-col md:flex-row min-h-screen">
       <Sidebar />
-      <div className="flex-1 p-8">
+      <div className="flex-1 p-6 lg:p-10">
         <div className="flex items-center gap-4 mb-6">
-          <button onClick={() => router.push('/tasks')} className="p-2 hover:bg-slate-200 rounded-lg">
-            <ArrowLeft size={20} className="text-slate-600" />
+          <button onClick={() => router.push('/tasks')} className="p-2 hover:bg-wash rounded-xl">
+            <ArrowLeft size={20} className="text-muted" />
           </button>
           <div className="flex-1">
-            <h1 className="text-2xl font-bold text-slate-800">{task?.title}</h1>
+            <div className="page-kicker">Task Detail</div>
+            <h1 className="page-title mt-2">{task?.title}</h1>
           </div>
           {editMode ? (
             <button onClick={handleSave} className="btn-primary flex items-center gap-2">
-              <Save size={20} />
+              <Save size={18} />
               Save
             </button>
           ) : (
@@ -129,11 +130,11 @@ export default function TaskDetailPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
-            <div className="card">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Task Details</h2>
+            <div className="card card-elevated">
+              <h2 className="text-xl font-semibold text-ink mb-4">Task Details</h2>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Title</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Title</label>
                   {editMode ? (
                     <input
                       type="text"
@@ -142,11 +143,11 @@ export default function TaskDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <p className="text-slate-800">{task?.title}</p>
+                    <p className="text-ink">{task?.title}</p>
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Description</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Description</label>
                   {editMode ? (
                     <textarea
                       value={formData.description}
@@ -155,12 +156,12 @@ export default function TaskDetailPage() {
                       rows={4}
                     />
                   ) : (
-                    <p className="text-slate-600">{task?.description || 'No description'}</p>
+                    <p className="text-muted">{task?.description || 'No description'}</p>
                   )}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-slate-500 mb-1">Status</label>
+                    <label className="block text-sm font-semibold text-muted mb-1">Status</label>
                     {editMode ? (
                       <select
                         value={formData.status}
@@ -176,12 +177,12 @@ export default function TaskDetailPage() {
                     ) : (
                       <div className="flex items-center gap-2">
                         <div className={`w-3 h-3 rounded-full ${currentStatus?.color}`} />
-                        <span className="text-slate-800">{currentStatus?.label}</span>
+                        <span className="text-ink">{currentStatus?.label}</span>
                       </div>
                     )}
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-500 mb-1">Priority</label>
+                    <label className="block text-sm font-semibold text-muted mb-1">Priority</label>
                     {editMode ? (
                       <select
                         value={formData.priority}
@@ -197,13 +198,13 @@ export default function TaskDetailPage() {
                     ) : (
                       <div className="flex items-center gap-2">
                         <Flag size={16} className={currentPriority?.color} />
-                        <span className="text-slate-800">{currentPriority?.label}</span>
+                        <span className="text-ink">{currentPriority?.label}</span>
                       </div>
                     )}
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Due Date</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Due Date</label>
                   {editMode ? (
                     <input
                       type="datetime-local"
@@ -212,8 +213,8 @@ export default function TaskDetailPage() {
                       className="input-field"
                     />
                   ) : (
-                    <div className="flex items-center gap-2 text-slate-800">
-                      <Calendar size={16} className="text-slate-400" />
+                    <div className="flex items-center gap-2 text-ink">
+                      <Calendar size={16} className="text-muted" />
                       {task?.due_date
                         ? new Date(task.due_date).toLocaleString()
                         : 'No due date'}
@@ -221,7 +222,7 @@ export default function TaskDetailPage() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-1">Contact</label>
+                  <label className="block text-sm font-semibold text-muted mb-1">Contact</label>
                   {editMode ? (
                     <select
                       value={formData.contact_id}
@@ -236,7 +237,7 @@ export default function TaskDetailPage() {
                       ))}
                     </select>
                   ) : (
-                    <p className="text-slate-800">
+                    <p className="text-ink">
                       {task?.contact_id
                         ? contactsList.find((c) => c.id === task.contact_id)?.name || '-'
                         : '-'}
@@ -248,35 +249,35 @@ export default function TaskDetailPage() {
           </div>
 
           <div className="space-y-6">
-            <div className="card">
-              <h2 className="text-lg font-semibold text-slate-800 mb-4">Quick Actions</h2>
+            <div className="card card-elevated">
+              <h2 className="text-xl font-semibold text-ink mb-4">Quick Actions</h2>
               <div className="space-y-2">
                 <button
                   onClick={() => handleStatusChange('pending')}
-                  className={`w-full p-3 rounded-lg flex items-center gap-3 ${
-                    task?.status === 'pending' ? 'bg-slate-100' : 'bg-slate-50'
+                  className={`w-full p-3 rounded-2xl flex items-center gap-3 ${
+                    task?.status === 'pending' ? 'bg-wash' : 'bg-white/70'
                   }`}
                 >
                   <div className="w-3 h-3 rounded-full bg-slate-500" />
-                  <span className="text-slate-800">Pending</span>
+                  <span className="text-ink">Pending</span>
                 </button>
                 <button
                   onClick={() => handleStatusChange('in_progress')}
-                  className={`w-full p-3 rounded-lg flex items-center gap-3 ${
-                    task?.status === 'in_progress' ? 'bg-blue-50' : 'bg-slate-50'
+                  className={`w-full p-3 rounded-2xl flex items-center gap-3 ${
+                    task?.status === 'in_progress' ? 'bg-wash' : 'bg-white/70'
                   }`}
                 >
-                  <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  <span className="text-slate-800">In Progress</span>
+                  <div className="w-3 h-3 rounded-full bg-sky-500" />
+                  <span className="text-ink">In Progress</span>
                 </button>
                 <button
                   onClick={() => handleStatusChange('completed')}
-                  className={`w-full p-3 rounded-lg flex items-center gap-3 ${
-                    task?.status === 'completed' ? 'bg-green-50' : 'bg-slate-50'
+                  className={`w-full p-3 rounded-2xl flex items-center gap-3 ${
+                    task?.status === 'completed' ? 'bg-wash' : 'bg-white/70'
                   }`}
                 >
-                  <div className="w-3 h-3 rounded-full bg-green-500" />
-                  <span className="text-slate-800">Completed</span>
+                  <div className="w-3 h-3 rounded-full bg-blue-600" />
+                  <span className="text-ink">Completed</span>
                 </button>
               </div>
             </div>
