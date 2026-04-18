@@ -9,6 +9,7 @@ from routes import (
     activities,
     reports,
     users,
+    agent,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
@@ -32,6 +33,7 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(activities.router, prefix="/api/activities", tags=["activities"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 
 
 @app.get("/")
