@@ -27,7 +27,7 @@ function GmailOAuthCallbackContent() {
     const complete = async () => {
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch('http://localhost:8000/api/gmail/oauth/callback', {
+        const response = await fetch('/api/gmail/oauth/callback', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

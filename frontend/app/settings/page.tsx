@@ -87,7 +87,7 @@ export default function SettingsPage() {
   const handleConfigureEmail = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/gmail/oauth/authorize', {
+      const response = await fetch('/api/gmail/oauth/authorize', {
         headers: {
           'Authorization': `Bearer ${token}`
         }

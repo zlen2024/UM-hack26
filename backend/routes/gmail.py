@@ -23,7 +23,7 @@ TOPIC_NAME = 'projects/umhack26/topics/UMHackCRM'
 from routes.google_calendar import _get_oauth_credentials, _build_pkce_pair, OAUTH_STATE_STORE
 
 @router.get("/oauth/authorize")
-def authorize_gmail(payload: Optional[dict] = None, current_user: User = Depends(get_current_user)):
+def authorize_gmail(request: Request, payload: Optional[dict] = None, current_user: User = Depends(get_current_user)):
     oauth_config = _get_oauth_credentials()
     if not oauth_config:
         raise HTTPException(status_code=400, detail="OAuth2 credentials not configured")
@@ -31,7 +31,9 @@ def authorize_gmail(payload: Optional[dict] = None, current_user: User = Depends
     try:
         config = oauth_config.get("web") or oauth_config.get("installed")
         # We assume the frontend callback URL for Gmail is http://localhost:3000/api/auth/callback/google
-        redirect_uri = "http://localhost:3000/api/auth/callback/google"
+        scheme = request.headers.get("x-forwarded-proto", "http" if "localhost" in request.url.netloc else "https")
+        host = request.headers.get("x-forwarded-host", request.url.netloc)
+        redirect_uri = f"{scheme}://{host}/api/auth/callback/google"
 
         client_id = config.get("client_id")
 
@@ -59,7 +61,7 @@ def authorize_gmail(payload: Optional[dict] = None, current_user: User = Depends
         raise HTTPException(status_code=500, detail=f"Failed to generate auth url: {str(e)}")
 
 @router.post("/oauth/callback")
-def complete_gmail_oauth(payload: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def complete_gmail_oauth(request: Request, payload: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     code = payload.get("code")
     state = payload.get("state")
 
@@ -78,7 +80,9 @@ def complete_gmail_oauth(payload: dict, current_user: User = Depends(get_current
             oauth_config,
             scopes=GMAIL_SCOPES,
         )
-        flow.redirect_uri = "http://localhost:3000/api/auth/callback/google"
+        flow.scheme = request.headers.get("x-forwarded-proto", "http" if "localhost" in request.url.netloc else "https")
+        host = request.headers.get("x-forwarded-host", request.url.netloc)
+        redirect_uri = f"{scheme}://{host}/api/auth/callback/google"
         flow.fetch_token(code=code, code_verifier=code_verifier)
         credentials = flow.credentials
 
