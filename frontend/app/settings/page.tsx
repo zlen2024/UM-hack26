@@ -83,6 +83,29 @@ export default function SettingsPage() {
     };
   }, [router]);
 
+
+  const handleConfigureEmail = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:8000/api/gmail/oauth/authorize', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.authorization_url) {
+          window.location.href = data.authorization_url;
+        }
+      } else {
+        alert('Failed to get authorization URL');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error connecting to Gmail');
+    }
+  };
+
   const handleConnect = (key: string) => {
     setActiveIntegration(key);
     if (key === 'calendar') {
@@ -251,8 +274,9 @@ export default function SettingsPage() {
                   name="Google Email"
                   desc="Sync your Gmail inbox and send emails from CRM."
                   status={integrationStatus.email ? 'on' : 'off'}
-                  onConnect={() => handleConnect('email')}
+                  onConnect={handleConfigureEmail}
                   onDisconnect={() => handleDisconnect('email')}
+                  customConnectText="Configure"
                 />
                 <IntegrationBox
                   icon={<Calendar size={22} className="text-blue-600" />}
@@ -337,13 +361,14 @@ export default function SettingsPage() {
 }
 
 // --- IntegrationBox component ---
-function IntegrationBox({ icon, name, desc, status, onConnect, onDisconnect }: {
+function IntegrationBox({ icon, name, desc, status, onConnect, onDisconnect, customConnectText }: {
   icon: React.ReactNode;
   name: string;
   desc: string;
   status: 'on' | 'off';
   onConnect: () => void;
   onDisconnect: () => void;
+  customConnectText?: string;
 }) {
   return (
     <div className="flex flex-col justify-between bg-wash rounded-2xl p-4 shadow-sm border border-transparent hover:border-blue-200 transition-all">
@@ -363,7 +388,7 @@ function IntegrationBox({ icon, name, desc, status, onConnect, onDisconnect }: {
         {status === 'on' ? (
           <button className="btn-ghost text-xs font-semibold text-blue-700" onClick={onDisconnect}>Disconnect</button>
         ) : (
-          <button className="btn-ghost text-xs font-semibold text-muted" onClick={onConnect}>Connect</button>
+          <button className="btn-ghost text-xs font-semibold text-muted" onClick={onConnect}>{customConnectText || "Connect"}</button>
         )}
       </div>
     </div>

@@ -24,6 +24,31 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Google API fields
+    google_email = Column(String, nullable=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
+
+    # Google API fields
+    google_email = Column(String, nullable=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
+
+    # Google API fields
+    google_email = Column(String, nullable=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
+
+    # Google API fields
+    google_email = Column(String, nullable=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
+
+    # Google API fields
+    google_email = Column(String, nullable=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
+
     contacts = relationship(
         "Contact", back_populates="owner", foreign_keys="Contact.user_id"
     )
@@ -49,6 +74,11 @@ class Contact(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Google API fields
+    google_email = Column(String, nullable=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
+
     owner = relationship("User", back_populates="contacts")
     opportunities = relationship("Opportunity", back_populates="contact")
     tasks = relationship("Task", back_populates="contact")
@@ -68,6 +98,11 @@ class Opportunity(Base):
     expected_close_date = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Google API fields
+    google_email = Column(String, nullable=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
 
     owner = relationship("User", back_populates="opportunities", foreign_keys=[user_id])
     assigned_user = relationship("User", foreign_keys=[assigned_to])
@@ -91,6 +126,11 @@ class Task(Base):
     opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Google API fields
+    google_email = Column(String, nullable=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
 
     owner = relationship("User", back_populates="tasks", foreign_keys=[user_id])
     assigned_user = relationship("User", foreign_keys=[assigned_to])
