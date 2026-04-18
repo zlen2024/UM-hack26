@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import sys
-sys.path.insert(0, '/c/Users/harut/OneDrive/Desktop/UM/UM-hack26/backend')
+sys.path.insert(0, '/app/backend')
 
 from database import SessionLocal
 from models import Activity
