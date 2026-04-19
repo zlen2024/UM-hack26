@@ -13,6 +13,7 @@ from routes import (
     agent,
     google_calendar,
     gmail,
+    emails,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
@@ -66,6 +67,9 @@ app.include_router(
 )
 app.include_router(
     gmail.router, prefix="/api/gmail", tags=["gmail"]
+)
+app.include_router(
+    emails.router, prefix="/api/emails", tags=["emails"]
 )
 
 

@@ -11,7 +11,8 @@ import {
   BarChart3,
   Bot,
   Settings,
-  LogOut
+  LogOut,
+  Mail
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -21,6 +22,7 @@ const navItems = [
   { href: '/opportunities', label: 'Opportunities', icon: Building2 },
   { href: '/tasks', label: 'Tasks', icon: CheckSquare },
   { href: '/calendar', label: 'Calendar', icon: Calendar },
+  { href: '/emails', label: 'Emails', icon: Mail },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
 ];
 

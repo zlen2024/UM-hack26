@@ -59,6 +59,7 @@ class User(Base):
     activities = relationship(
         "Activity", back_populates="owner", foreign_keys="Activity.user_id"
     )
+    emails = relationship("Email", back_populates="owner")
 
 
 class Contact(Base):
@@ -155,3 +156,25 @@ class Activity(Base):
     owner = relationship("User", back_populates="activities", foreign_keys=[user_id])
     contact = relationship("Contact", back_populates="activities")
     opportunity = relationship("Opportunity", back_populates="activities")
+
+
+class Email(Base):
+    __tablename__ = "emails"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    gmail_id = Column(String, unique=True, index=True)
+    thread_id = Column(String, nullable=True)
+    subject = Column(String, nullable=True)
+    from_email = Column(String)
+    to_email = Column(String)
+    snippet = Column(Text, nullable=True)
+    body = Column(Text, nullable=True)
+    html_body = Column(Text, nullable=True)
+    label_ids = Column(String, nullable=True)
+    history_id = Column(String)
+    is_read = Column(Boolean, default=False)
+    received_at = Column(DateTime, nullable=True)
+    stored_at = Column(DateTime, default=datetime.utcnow)
+
+    owner = relationship("User", back_populates="emails")

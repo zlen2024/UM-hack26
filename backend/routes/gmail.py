@@ -157,6 +157,9 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
         raise HTTPException(status_code=500, detail=f"Failed to complete OAuth callback: {str(e)}")
 
 def process_gmail_update(user_email: str, history_id: str, db: Session):
+    from models import Email
+    from datetime import datetime
+    
     user = db.query(User).filter(User.google_email == user_email).first()
     if not user or not user.google_refresh_token:
         print(f"User {user_email} not found or no refresh token")
@@ -179,8 +182,81 @@ def process_gmail_update(user_email: str, history_id: str, db: Session):
         service = build('gmail', 'v1', credentials=creds)
         print(f"Processing push update for {user_email}, new historyId: {history_id}")
 
-        messages = service.users().messages().list(userId='me', maxResults=5).execute()
-        print("Recent messages:", [m['id'] for m in messages.get('messages', [])])
+        results = service.users().messages().list(
+            userId='me',
+            maxResults=10,
+            labelIds=['INBOX'],
+        ).execute()
+        
+        messages = results.get('messages', [])
+        
+        for msg_meta in messages:
+            msg_id = msg_meta['id']
+            
+            existing = db.query(Email).filter(
+                Email.gmail_id == msg_id,
+                Email.user_id == user.id
+            ).first()
+            
+            if existing:
+                continue
+            
+            msg = service.users().messages().get(
+                userId='me',
+                id=msg_id,
+                format='full'
+            ).execute()
+            
+            payload = msg.get('payload', {})
+            headers = payload.get('headers', {})
+            
+            subject = headers.get('Subject', '')
+            from_email = headers.get('From', '')
+            to_email = headers.get('To', '')
+            snippet = msg.get('snippet', '')
+            thread_id = msg.get('threadId')
+            label_ids = ','.join(msg.get('labelIds', []))
+            msg_history_id = msg.get('historyId', '')
+            
+            body = ''
+            html_body = ''
+            
+            if 'parts' in payload:
+                for part in payload['parts']:
+                    if part.get('mimeType') == 'text/plain' and 'body' in part and 'data' in part.get('body', {}):
+                        body = base64.b64decode(part['body']['data']).decode('utf-8', errors='replace')
+                    elif part.get('mimeType') == 'text/html' and 'body' in part and 'data' in part.get('body', {}):
+                        html_body = base64.b64decode(part['body']['data']).decode('utf-8', errors='replace')
+            
+            if not body and 'body' in payload and 'data' in payload.get('body', {}):
+                body = base64.b64decode(payload['body']['data']).decode('utf-8', errors='replace')
+            
+            try:
+                internal_date = int(msg.get('internalDate', 0)) / 1000
+                received_at = datetime.fromtimestamp(internal_date)
+            except:
+                received_at = datetime.utcnow()
+            
+            email_record = Email(
+                user_id=user.id,
+                gmail_id=msg_id,
+                thread_id=thread_id,
+                subject=subject,
+                from_email=from_email,
+                to_email=to_email,
+                snippet=snippet[:500] if snippet else '',
+                body=body[:50000] if body else '',
+                html_body=html_body[:50000] if html_body else '',
+                label_ids=label_ids,
+                history_id=msg_history_id,
+                is_read='UNREAD' not in label_ids,
+                received_at=received_at,
+            )
+            db.add(email_record)
+            print(f"Stored email: {subject}")
+        
+        db.commit()
+        print(f"Sync complete for {user_email}")
 
     except Exception as e:
         print(f"Error processing gmail update: {str(e)}")
