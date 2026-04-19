@@ -374,13 +374,25 @@ def _write_tree(tree: ET.ElementTree) -> None:
 
 
 def _ensure_activity_columns(db: Session) -> None:
-    result = db.execute(text("PRAGMA table_info(activities)")).fetchall()
-    columns = {row[1] for row in result}
-    if "source" not in columns:
-        db.execute(text("ALTER TABLE activities ADD COLUMN source TEXT"))
-    if "external_id" not in columns:
-        db.execute(text("ALTER TABLE activities ADD COLUMN external_id TEXT"))
-    db.commit()
+    try:
+        result = db.execute(text("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'activities'
+        """)).fetchall()
+        columns = {row[0] for row in result}
+    except Exception:
+        columns = set()
+    
+    try:
+        if "source" not in columns:
+            db.execute(text("ALTER TABLE activities ADD COLUMN source TEXT"))
+        if "external_id" not in columns:
+            db.execute(text("ALTER TABLE activities ADD COLUMN external_id TEXT"))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[Activity Columns] Migration skipped (may already exist): {e}")
 
 
 @router.get("/credentials")
