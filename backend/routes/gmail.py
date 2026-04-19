@@ -124,11 +124,7 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
         redirect_uri = f"{base_url}/api/auth/callback/google"
         flow.redirect_uri = redirect_uri
 
-        flow.fetch_token(code=code) # Not using PKCE verifier here since standard flow doesn't always need it or we didn't send challenge
-        # Let's handle it with PKCE since we generated verifier
-        # Actually Google Python client flow.fetch_token doesn't take code_verifier in kwargs sometimes depending on the version.
-        # But we can try passing it if we built the challenge. However, in our flow.authorization_url we didn't pass code_challenge.
-        # So we should just fetch_token(code=code)
+        flow.fetch_token(code=code, code_verifier=code_verifier)
 
         credentials = flow.credentials
 
