@@ -51,7 +51,7 @@ XML_PATH = DATA_DIR / "google_calendar.xml"
 TOKENS_DIR = DATA_DIR / "tokens"
 DEFAULT_TEST_EMAIL = "fakhrulhakimy93@gmail.com"
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-OAUTH_STATE_TTL_SECONDS = 600
+OAUTH_STATE_TTL_SECONDS = 1800
 OAUTH_STATE_STORE: Dict[str, Tuple[str, float]] = {}
 
 
@@ -1043,9 +1043,13 @@ def complete_oauth(payload: dict, current_user: User = Depends(get_current_user)
 
     if not code_verifier and state:
         _prune_oauth_state_store()
+        print(f"[OAuth Complete] Looking for state: {state[:20]}... (total states in store: {len(OAUTH_STATE_STORE)})")
         stored = OAUTH_STATE_STORE.pop(state, None)
         if stored:
             code_verifier = stored[0]
+            print(f"[OAuth Complete] Found code_verifier for state: {state[:20]}...")
+        else:
+            print(f"[OAuth Complete] State not found in store! Available states: {list(OAUTH_STATE_STORE.keys())[:5]}")
 
     if not code_verifier:
         raise HTTPException(status_code=400, detail="Missing code verifier. Please re-authorize.")
