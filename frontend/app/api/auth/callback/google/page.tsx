@@ -27,9 +27,8 @@ function OAuthCallbackContent() {
     const complete = async () => {
       try {
         const token = localStorage.getItem('token');
-        const redirectUri = `${window.location.origin}/api/auth/callback/google`;
         
-        console.log('[OAuth Callback] Sending to backend:', { code: code?.slice(0, 20), state: state?.slice(0, 20), redirectUri });
+        console.log('[OAuth Callback] Sending to backend:', { code: code?.slice(0, 20), state: state?.slice(0, 20) });
         
         const response = await fetch('/api/google-calendar/oauth/complete', {
           method: 'POST',
@@ -37,7 +36,7 @@ function OAuthCallbackContent() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({ code, state, redirect_uri: redirectUri })
+          body: JSON.stringify({ code, state })
         });
 
         if (!response.ok) {

@@ -1011,22 +1011,24 @@ def authorize_oauth(payload: Optional[dict] = None, current_user: User = Depends
 
 
 @router.post("/oauth/complete")
-def complete_oauth(payload: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def complete_oauth(request: Request, payload: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Exchange authorization code for tokens and persist them to database
-    Expected payload: {"code": "...", "redirect_uri": "...", "state": "...", "code_verifier": "..."}
+    Expected payload: {"code": "...", "state": "..."}
     """
     code = payload.get("code") if isinstance(payload, dict) else None
-    redirect_uri = payload.get("redirect_uri") if isinstance(payload, dict) else None
     state = payload.get("state") if isinstance(payload, dict) else None
-    code_verifier = payload.get("code_verifier") if isinstance(payload, dict) else None
     if not code:
         raise HTTPException(status_code=400, detail="Authorization code is required")
 
+    print(f"[OAuth Complete] [{datetime.now().isoformat()}] ==== CALENDAR OAUTH COMPLETE START ====")
+    print(f"[OAuth Complete] User ID: {current_user.id}, Email: {current_user.email}")
+    print(f"[OAuth Complete] Received - code: {code[:30] if code else 'None'}..., state: {state[:20] if state else 'None'}...")
+    
     oauth_config = _get_oauth_credentials()
     if not oauth_config:
         raise HTTPException(status_code=400, detail="OAuth2 credentials not configured")
-
+    
     config = oauth_config.get("web") or oauth_config.get("installed")
     if not config:
         raise HTTPException(status_code=400, detail="OAuth2 credentials are invalid")
@@ -1036,23 +1038,44 @@ def complete_oauth(payload: dict, current_user: User = Depends(get_current_user)
         SCOPES,
     )
 
-    if redirect_uri:
-        flow.redirect_uri = redirect_uri
-    elif isinstance(config, dict) and config.get("redirect_uris"):
-        flow.redirect_uri = config.get("redirect_uris")[0]
+    origin = request.headers.get("origin")
+    referer = request.headers.get("referer")
 
-    if not code_verifier and state:
-        _prune_oauth_state_store()
-        print(f"[OAuth Complete] Looking for state: {state[:20]}... (total states in store: {len(OAUTH_STATE_STORE)})")
-        stored = OAUTH_STATE_STORE.pop(state, None)
-        if stored:
-            code_verifier = stored[0]
-            print(f"[OAuth Complete] Found code_verifier for state: {state[:20]}...")
-        else:
-            print(f"[OAuth Complete] State not found in store! Available states: {list(OAUTH_STATE_STORE.keys())[:5]}")
+    if origin:
+        base_url = origin
+    elif referer:
+        parts = referer.split("/")
+        base_url = f"{parts[0]}//{parts[2]}"
+    else:
+        scheme = request.headers.get("x-forwarded-proto", "http" if "localhost" in request.url.netloc else "https")
+        host = request.headers.get("x-forwarded-host", request.url.netloc)
+        base_url = f"{scheme}://{host}"
 
-    if not code_verifier:
-        raise HTTPException(status_code=400, detail="Missing code verifier. Please re-authorize.")
+    if "um-hack26" in base_url or "fly.dev" in base_url or ("localhost" not in base_url and "127.0.0.1" not in base_url):
+        base_url = "https://um-hack26-zf1hkq.fly.dev"
+
+    redirect_uri = f"{base_url}/api/auth/callback/google"
+    flow.redirect_uri = redirect_uri
+    print(f"[OAuth Complete] Flow configured with redirect_uri: {redirect_uri}")
+
+    if not state:
+        print(f"[OAuth Complete] ERROR: Missing state")
+        raise HTTPException(status_code=400, detail="Missing state")
+
+    _prune_oauth_state_store()
+    print(f"[OAuth Complete] Looking for state: {state[:20]}... (total states in store: {len(OAUTH_STATE_STORE)})")
+    
+    if state not in OAUTH_STATE_STORE:
+        print(f"[OAuth Complete] ERROR: State not in store - {state}")
+        raise HTTPException(status_code=400, detail="Invalid state")
+
+    code_verifier, expires_at = OAUTH_STATE_STORE[state]
+    print(f"[OAuth Complete] State found - expires at: {expires_at}, remaining: {expires_at - datetime.now().timestamp()}s")
+
+    if datetime.now().timestamp() > expires_at:
+        del OAUTH_STATE_STORE[state]
+        print(f"[OAuth Complete] ERROR: State expired")
+        raise HTTPException(status_code=400, detail="OAuth state expired")
 
     try:
         flow.fetch_token(code=code, code_verifier=code_verifier)
@@ -1064,6 +1087,10 @@ def complete_oauth(payload: dict, current_user: User = Depends(get_current_user)
     current_user.calendar_refresh_token = credentials.refresh_token
     db.commit()
     print(f"[Calendar OAuth] Tokens saved to database for user {current_user.id}")
+    
+    del OAUTH_STATE_STORE[state]
+    print(f"[OAuth Complete] State cleaned up")
+    print(f"[OAuth Complete] ==== CALENDAR CONNECTED SUCCESSFULLY ====")
 
     return {"status": "authorized"}
 
