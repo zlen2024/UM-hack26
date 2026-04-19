@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { auth } from '@/lib/api';
+import { preloadUserData } from '@/lib/cache';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,6 +19,12 @@ export default function LoginPage() {
       const res = await auth.login({ email, password });
       localStorage.setItem('token', res.data.access_token);
       localStorage.setItem('user', JSON.stringify(res.data.user));
+      
+      console.log('[Login] Login successful, starting background preload...');
+      preloadUserData().then(() => {
+        console.log('[Login] Preload complete, navigating to dashboard');
+      });
+      
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed');
