@@ -78,7 +78,6 @@ def authorize_gmail(request: Request, payload: Optional[dict] = None, current_us
 
         authorization_url, state_generated = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true',
             state=state,
             prompt='consent',
             code_challenge=code_challenge,
