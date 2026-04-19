@@ -92,52 +92,66 @@ def _get_oauth_credentials():
     }
 
 
-def _build_calendar_service_oauth(user_id: int):
-    """Build Google Calendar service using OAuth2 credentials for a user"""
+def _build_calendar_service_oauth(user: User, db: Session = None):
+    """Build Google Calendar service using OAuth2 credentials from user database record"""
     if not GOOGLE_API_AVAILABLE:
         raise HTTPException(
             status_code=500,
             detail="Google API client not installed. Run: pip install google-api-python-client google-auth-oauthlib"
         )
     
-    # Ensure tokens directory exists
-    TOKENS_DIR.mkdir(parents=True, exist_ok=True)
+    if not user.calendar_refresh_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Calendar OAuth not authorized. Please authorize via /oauth/authorize"
+        )
     
-    # Get OAuth2 config
     oauth_config = _get_oauth_credentials()
     if not oauth_config:
         raise HTTPException(
             status_code=400,
-            detail="OAuth2 credentials not configured. Please upload credentials JSON."
+            detail="OAuth2 credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env"
         )
     
-    # Token file for this user
-    token_file = TOKENS_DIR / f"user_{user_id}_token.json"
-    creds = None
+    config = oauth_config.get("web") or oauth_config.get("installed")
+    if not config:
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth2 credentials are invalid"
+        )
     
-    # Load existing token if available
-    if token_file.exists():
-        try:
-            creds = Credentials.from_authorized_user_file(str(token_file), SCOPES)
-        except Exception as e:
-            print(f"Error loading token: {e}")
-            creds = None
+    creds = Credentials(
+        token=user.calendar_access_token,
+        refresh_token=user.calendar_refresh_token,
+        token_uri=config.get("token_uri"),
+        client_id=config.get("client_id"),
+        client_secret=config.get("client_secret")
+    )
     
-    # If no valid credentials, need to authorize
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(GoogleAuthRequest())
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(GoogleAuthRequest())
+                user.calendar_access_token = creds.token
+                user.calendar_refresh_token = creds.refresh_token
+                if db:
+                    db.commit()
+                else:
+                    from database import get_db
+                    db_local = next(get_db())
+                    db_local.commit()
+                print(f"[Calendar OAuth] Token refreshed for user {user.id}")
+            except Exception as e:
+                print(f"[Calendar OAuth] Error refreshing token: {e}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="OAuth2 authorization needed. Please re-authorize the application."
+                )
         else:
-            # This would normally require user to authenticate via browser
-            # For now, we'll raise an error
             raise HTTPException(
                 status_code=400,
                 detail="OAuth2 authorization needed. Please authorize the application."
             )
-        
-        # Save the refreshed token
-        with open(token_file, 'w') as f:
-            f.write(creds.to_json())
     
     try:
         service = build('calendar', 'v3', credentials=creds)
@@ -380,14 +394,7 @@ def get_credentials(current_user: User = Depends(get_current_user)):
     cred = user_node.find("credentials")
     test_email = cred.get("test_email") if cred is not None else None
     oauth_configured = _get_oauth_credentials() is not None
-    token_file = TOKENS_DIR / f"user_{current_user.id}_token.json"
-    authorized = False
-    if token_file.exists():
-        try:
-            creds = Credentials.from_authorized_user_file(str(token_file), SCOPES)
-            authorized = bool(creds.valid or (creds.expired and creds.refresh_token))
-        except Exception:
-            authorized = False
+    authorized = bool(current_user.calendar_refresh_token)
     connected = oauth_configured and authorized
     return {
         "connected": connected,
@@ -446,7 +453,7 @@ def save_credentials(
     google_event_id = str(uuid4())
     oauth_error = None
     try:
-        service = _build_calendar_service_oauth(current_user.id)
+        service = _build_calendar_service_oauth(current_user)
         attendee_emails = _normalize_attendees(
             [test_email, current_user.email]
         )
@@ -511,7 +518,7 @@ def save_credentials(
 
 
 @router.delete("/credentials")
-def clear_credentials(current_user: User = Depends(get_current_user)):
+def clear_credentials(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     tree = _ensure_tree()
     root = tree.getroot()
     user_node = _get_user_node(root, current_user.id)
@@ -522,6 +529,12 @@ def clear_credentials(current_user: User = Depends(get_current_user)):
     if cred is not None:
         user_node.remove(cred)
         _write_tree(tree)
+    
+    current_user.calendar_access_token = None
+    current_user.calendar_refresh_token = None
+    db.commit()
+    print(f"[Calendar] Credentials cleared for user {current_user.id}")
+    
     return {"status": "cleared"}
 
 
@@ -541,7 +554,7 @@ def list_events(
         return []
 
     try:
-        service = _build_calendar_service_oauth(current_user.id)
+        service = _build_calendar_service_oauth(current_user)
         resolved_calendar_id = calendar_id or "primary"
         google_events = _get_google_calendar_events(
             service,
@@ -616,7 +629,7 @@ def create_event(
     if cred is not None and cred.get("test_email"):
         test_email = cred.get("test_email")
 
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     resolved_calendar_id = calendar_id or "primary"
 
     attendee_emails = _normalize_attendees(
@@ -770,7 +783,7 @@ def update_event(
         if payload.attendees is not None:
             attendees = _normalize_attendees(payload.attendees)
             updates["attendees"] = [{"email": email} for email in attendees]
-        service = _build_calendar_service_oauth(current_user.id)
+        service = _build_calendar_service_oauth(current_user)
         if updates:
             _update_google_calendar_event(service, event_id, updates, resolved_calendar_id)
         google_event = _execute_google_request(
@@ -908,7 +921,7 @@ def delete_event(
 
     source = event_node.get("source") if event_node is not None else "google_calendar"
     if source == "google_calendar":
-        service = _build_calendar_service_oauth(current_user.id)
+        service = _build_calendar_service_oauth(current_user)
         _delete_google_calendar_event(service, event_id, resolved_calendar_id)
 
     if event_node is not None and events_node is not None:
@@ -998,10 +1011,10 @@ def authorize_oauth(payload: Optional[dict] = None, current_user: User = Depends
 
 
 @router.post("/oauth/complete")
-def complete_oauth(payload: dict, current_user: User = Depends(get_current_user)):
+def complete_oauth(payload: dict, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
-    Exchange authorization code for tokens and persist them
-    Expected payload: {"code": "...", "redirect_uri": "..."}
+    Exchange authorization code for tokens and persist them to database
+    Expected payload: {"code": "...", "redirect_uri": "...", "state": "...", "code_verifier": "..."}
     """
     code = payload.get("code") if isinstance(payload, dict) else None
     redirect_uri = payload.get("redirect_uri") if isinstance(payload, dict) else None
@@ -1042,10 +1055,11 @@ def complete_oauth(payload: dict, current_user: User = Depends(get_current_user)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to exchange code: {str(e)}")
 
-    TOKENS_DIR.mkdir(parents=True, exist_ok=True)
-    token_file = TOKENS_DIR / f"user_{current_user.id}_token.json"
-    with open(token_file, 'w') as f:
-        f.write(flow.credentials.to_json())
+    credentials = flow.credentials
+    current_user.calendar_access_token = credentials.token
+    current_user.calendar_refresh_token = credentials.refresh_token
+    db.commit()
+    print(f"[Calendar OAuth] Tokens saved to database for user {current_user.id}")
 
     return {"status": "authorized"}
 
@@ -1082,7 +1096,7 @@ def delete_calendar(
 
 @router.get("/gcal/colors")
 def gcal_colors(current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(service.colors().get(), "Failed to fetch colors")
 
 
@@ -1090,14 +1104,14 @@ def gcal_colors(current_user: User = Depends(get_current_user)):
 def gcal_channels_stop(payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Channel body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(service.channels().stop(body=payload), "Failed to stop channel")
 
 
 # Calendars
 @router.get("/gcal/calendars/{calendar_id}")
 def gcal_calendars_get(calendar_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(service.calendars().get(calendarId=calendar_id), "Failed to fetch calendar")
 
 
@@ -1105,19 +1119,19 @@ def gcal_calendars_get(calendar_id: str, current_user: User = Depends(get_curren
 def gcal_calendars_insert(payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Calendar body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(service.calendars().insert(body=payload), "Failed to create calendar")
 
 
 @router.delete("/gcal/calendars/{calendar_id}")
 def gcal_calendars_delete(calendar_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(service.calendars().delete(calendarId=calendar_id), "Failed to delete calendar")
 
 
 @router.post("/gcal/calendars/{calendar_id}/clear")
 def gcal_calendars_clear(calendar_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(service.calendars().clear(calendarId=calendar_id), "Failed to clear calendar")
 
 
@@ -1125,7 +1139,7 @@ def gcal_calendars_clear(calendar_id: str, current_user: User = Depends(get_curr
 def gcal_calendars_patch(calendar_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Calendar patch body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.calendars().patch(calendarId=calendar_id, body=payload),
         "Failed to patch calendar",
@@ -1136,7 +1150,7 @@ def gcal_calendars_patch(calendar_id: str, payload: dict, current_user: User = D
 def gcal_calendars_update(calendar_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Calendar update body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.calendars().update(calendarId=calendar_id, body=payload),
         "Failed to update calendar",
@@ -1146,7 +1160,7 @@ def gcal_calendars_update(calendar_id: str, payload: dict, current_user: User = 
 # CalendarList
 @router.get("/gcal/users/me/calendarList")
 def gcal_calendar_list(request: Request, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.calendarList().list(**params),
@@ -1156,7 +1170,7 @@ def gcal_calendar_list(request: Request, current_user: User = Depends(get_curren
 
 @router.get("/gcal/users/me/calendarList/{calendar_id}")
 def gcal_calendar_list_get(calendar_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.calendarList().get(calendarId=calendar_id),
         "Failed to fetch calendarList entry",
@@ -1167,7 +1181,7 @@ def gcal_calendar_list_get(calendar_id: str, current_user: User = Depends(get_cu
 def gcal_calendar_list_insert(payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="CalendarList body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.calendarList().insert(body=payload),
         "Failed to insert calendarList entry",
@@ -1176,7 +1190,7 @@ def gcal_calendar_list_insert(payload: dict, current_user: User = Depends(get_cu
 
 @router.delete("/gcal/users/me/calendarList/{calendar_id}")
 def gcal_calendar_list_delete(calendar_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.calendarList().delete(calendarId=calendar_id),
         "Failed to delete calendarList entry",
@@ -1187,7 +1201,7 @@ def gcal_calendar_list_delete(calendar_id: str, current_user: User = Depends(get
 def gcal_calendar_list_patch(calendar_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="CalendarList patch body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.calendarList().patch(calendarId=calendar_id, body=payload),
         "Failed to patch calendarList entry",
@@ -1198,7 +1212,7 @@ def gcal_calendar_list_patch(calendar_id: str, payload: dict, current_user: User
 def gcal_calendar_list_update(calendar_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="CalendarList update body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.calendarList().update(calendarId=calendar_id, body=payload),
         "Failed to update calendarList entry",
@@ -1209,7 +1223,7 @@ def gcal_calendar_list_update(calendar_id: str, payload: dict, current_user: Use
 def gcal_calendar_list_watch(payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Watch body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.calendarList().watch(body=payload),
         "Failed to watch calendarList",
@@ -1219,7 +1233,7 @@ def gcal_calendar_list_watch(payload: dict, current_user: User = Depends(get_cur
 # ACL
 @router.get("/gcal/calendars/{calendar_id}/acl")
 def gcal_acl_list(calendar_id: str, request: Request, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.acl().list(calendarId=calendar_id, **params),
@@ -1231,7 +1245,7 @@ def gcal_acl_list(calendar_id: str, request: Request, current_user: User = Depen
 def gcal_acl_insert(calendar_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="ACL body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.acl().insert(calendarId=calendar_id, body=payload),
         "Failed to insert ACL rule",
@@ -1240,7 +1254,7 @@ def gcal_acl_insert(calendar_id: str, payload: dict, current_user: User = Depend
 
 @router.get("/gcal/calendars/{calendar_id}/acl/{rule_id}")
 def gcal_acl_get(calendar_id: str, rule_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.acl().get(calendarId=calendar_id, ruleId=rule_id),
         "Failed to fetch ACL rule",
@@ -1249,7 +1263,7 @@ def gcal_acl_get(calendar_id: str, rule_id: str, current_user: User = Depends(ge
 
 @router.delete("/gcal/calendars/{calendar_id}/acl/{rule_id}")
 def gcal_acl_delete(calendar_id: str, rule_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.acl().delete(calendarId=calendar_id, ruleId=rule_id),
         "Failed to delete ACL rule",
@@ -1260,7 +1274,7 @@ def gcal_acl_delete(calendar_id: str, rule_id: str, current_user: User = Depends
 def gcal_acl_patch(calendar_id: str, rule_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="ACL patch body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.acl().patch(calendarId=calendar_id, ruleId=rule_id, body=payload),
         "Failed to patch ACL rule",
@@ -1271,7 +1285,7 @@ def gcal_acl_patch(calendar_id: str, rule_id: str, payload: dict, current_user: 
 def gcal_acl_update(calendar_id: str, rule_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="ACL update body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.acl().update(calendarId=calendar_id, ruleId=rule_id, body=payload),
         "Failed to update ACL rule",
@@ -1282,7 +1296,7 @@ def gcal_acl_update(calendar_id: str, rule_id: str, payload: dict, current_user:
 def gcal_acl_watch(calendar_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Watch body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.acl().watch(calendarId=calendar_id, body=payload),
         "Failed to watch ACL",
@@ -1292,7 +1306,7 @@ def gcal_acl_watch(calendar_id: str, payload: dict, current_user: User = Depends
 # Events
 @router.get("/gcal/calendars/{calendar_id}/events")
 def gcal_events_list(calendar_id: str, request: Request, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.events().list(calendarId=calendar_id, **params),
@@ -1304,7 +1318,7 @@ def gcal_events_list(calendar_id: str, request: Request, current_user: User = De
 def gcal_events_insert(calendar_id: str, payload: dict, request: Request, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Event body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.events().insert(calendarId=calendar_id, body=payload, **params),
@@ -1314,7 +1328,7 @@ def gcal_events_insert(calendar_id: str, payload: dict, request: Request, curren
 
 @router.get("/gcal/calendars/{calendar_id}/events/{event_id}")
 def gcal_events_get(calendar_id: str, event_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.events().get(calendarId=calendar_id, eventId=event_id),
         "Failed to fetch event",
@@ -1323,7 +1337,7 @@ def gcal_events_get(calendar_id: str, event_id: str, current_user: User = Depend
 
 @router.delete("/gcal/calendars/{calendar_id}/events/{event_id}")
 def gcal_events_delete(calendar_id: str, event_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.events().delete(calendarId=calendar_id, eventId=event_id),
         "Failed to delete event",
@@ -1334,7 +1348,7 @@ def gcal_events_delete(calendar_id: str, event_id: str, current_user: User = Dep
 def gcal_events_patch(calendar_id: str, event_id: str, payload: dict, request: Request, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Event patch body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.events().patch(calendarId=calendar_id, eventId=event_id, body=payload, **params),
@@ -1346,7 +1360,7 @@ def gcal_events_patch(calendar_id: str, event_id: str, payload: dict, request: R
 def gcal_events_update(calendar_id: str, event_id: str, payload: dict, request: Request, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Event update body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.events().update(calendarId=calendar_id, eventId=event_id, body=payload, **params),
@@ -1356,7 +1370,7 @@ def gcal_events_update(calendar_id: str, event_id: str, payload: dict, request: 
 
 @router.get("/gcal/calendars/{calendar_id}/events/{event_id}/instances")
 def gcal_events_instances(calendar_id: str, event_id: str, request: Request, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.events().instances(calendarId=calendar_id, eventId=event_id, **params),
@@ -1366,7 +1380,7 @@ def gcal_events_instances(calendar_id: str, event_id: str, request: Request, cur
 
 @router.post("/gcal/calendars/{calendar_id}/events/{event_id}/move")
 def gcal_events_move(calendar_id: str, event_id: str, request: Request, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     if "destination" not in params:
         raise HTTPException(status_code=400, detail="destination query param is required")
@@ -1380,7 +1394,7 @@ def gcal_events_move(calendar_id: str, event_id: str, request: Request, current_
 def gcal_events_import(calendar_id: str, payload: dict, request: Request, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Event import body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.events().import_(calendarId=calendar_id, body=payload, **params),
@@ -1390,7 +1404,7 @@ def gcal_events_import(calendar_id: str, payload: dict, request: Request, curren
 
 @router.post("/gcal/calendars/{calendar_id}/events/quickAdd")
 def gcal_events_quick_add(calendar_id: str, request: Request, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     if "text" not in params:
         raise HTTPException(status_code=400, detail="text query param is required")
@@ -1404,7 +1418,7 @@ def gcal_events_quick_add(calendar_id: str, request: Request, current_user: User
 def gcal_events_watch(calendar_id: str, payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Watch body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.events().watch(calendarId=calendar_id, body=payload),
         "Failed to watch events",
@@ -1416,14 +1430,14 @@ def gcal_events_watch(calendar_id: str, payload: dict, current_user: User = Depe
 def gcal_freebusy(payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Freebusy body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(service.freebusy().query(body=payload), "Failed to query freebusy")
 
 
 # Settings
 @router.get("/gcal/users/me/settings")
 def gcal_settings_list(request: Request, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     params = _query_params(request)
     return _execute_google_request(
         service.settings().list(**params),
@@ -1433,7 +1447,7 @@ def gcal_settings_list(request: Request, current_user: User = Depends(get_curren
 
 @router.get("/gcal/users/me/settings/{setting_id}")
 def gcal_settings_get(setting_id: str, current_user: User = Depends(get_current_user)):
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.settings().get(setting=setting_id),
         "Failed to fetch setting",
@@ -1444,7 +1458,7 @@ def gcal_settings_get(setting_id: str, current_user: User = Depends(get_current_
 def gcal_settings_watch(payload: dict, current_user: User = Depends(get_current_user)):
     if not payload:
         raise HTTPException(status_code=400, detail="Watch body is required")
-    service = _build_calendar_service_oauth(current_user.id)
+    service = _build_calendar_service_oauth(current_user)
     return _execute_google_request(
         service.settings().watch(body=payload),
         "Failed to watch settings",
