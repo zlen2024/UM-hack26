@@ -187,13 +187,18 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
         current_user.google_refresh_token = credentials.refresh_token
         
         print(f"[OAuth Callback] Setting up Gmail watch for topic: {TOPIC_NAME}")
-        request_body = {
-            'labelIds': ['INBOX'],
-            'topicName': TOPIC_NAME,
-            'labelFilterBehavior': 'INCLUDE'
-        }
-        watch_response = service.users().watch(userId='me', body=request_body).execute()
-        print(f"[OAuth Callback] Watch response: {watch_response}")
+        try:
+            request_body = {
+                'labelIds': ['INBOX'],
+                'topicName': TOPIC_NAME,
+                'labelFilterBehavior': 'INCLUDE'
+            }
+            watch_response = service.users().watch(userId='me', body=request_body).execute()
+            print(f"[OAuth Callback] Watch response: {watch_response}")
+        except Exception as watch_error:
+            print(f"[OAuth Callback] WARNING: Watch failed: {str(watch_error)}")
+            watch_response = {'historyId': None, 'expiration': None}
+            print(f"[OAuth Callback] Continuing without watch - emails will need manual sync")
         
         expiration = watch_response.get('expiration')
         if expiration:
@@ -447,7 +452,8 @@ def get_gmail_status(current_user: User = Depends(get_current_user)):
         "watch_active": watch_active,
         "watch_expiration": watch_expiration.isoformat() if watch_expiration else None,
         "history_id": current_user.gmail_watch_history_id,
-        "oauth_configured": bool(oauth_config)
+        "oauth_configured": bool(oauth_config),
+        "topic_name": TOPIC_NAME
     }
 
 
