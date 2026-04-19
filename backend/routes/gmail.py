@@ -101,7 +101,8 @@ def authorize_gmail(request: Request, payload: Optional[dict] = None, current_us
 
 @router.post("/oauth/callback")
 async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    print(f"[OAuth Callback] [{datetime.now().isoformat()}] ==== GMAIL OAUTH CALLBACK START ====")
+    from datetime import datetime as dt
+    print(f"[OAuth Callback] [{dt.now().isoformat()}] ==== GMAIL OAUTH CALLBACK START ====")
     print(f"[OAuth Callback] User ID: {current_user.id}, Email: {current_user.email}")
     
     try:
@@ -122,9 +123,9 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
             raise HTTPException(status_code=400, detail="Invalid state. Please re-authorize.")
 
         code_verifier, expires_at = OAUTH_STATE_STORE[state]
-        print(f"[OAuth Callback] State found - expires at: {expires_at}, remaining: {expires_at - datetime.now().timestamp()}s")
+        print(f"[OAuth Callback] State found - expires at: {expires_at}, remaining: {expires_at - dt.now().timestamp()}s")
 
-        if datetime.now().timestamp() > expires_at:
+        if dt.now().timestamp() > expires_at:
             del OAUTH_STATE_STORE[state]
             print(f"[OAuth Callback] ERROR: State expired")
             raise HTTPException(status_code=400, detail="OAuth state expired")
@@ -197,8 +198,7 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
         
         expiration = watch_response.get('expiration')
         if expiration:
-            from datetime import datetime
-            current_user.gmail_watch_expiration = datetime.fromtimestamp(int(expiration) / 1000)
+            current_user.gmail_watch_expiration = dt.fromtimestamp(int(expiration) / 1000)
         current_user.gmail_watch_history_id = watch_response.get('historyId')
         
         db.commit()
