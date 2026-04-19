@@ -21,12 +21,12 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password_hash = Column(String)
     full_name = Column(String)
-    role = Column(String, default="user")
+    role = Column(String, default="user", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Google API fields
-    google_email = Column(String, nullable=True)
+    google_email = Column(String, nullable=True, index=True)
     google_access_token = Column(String, nullable=True)
     google_refresh_token = Column(String, nullable=True)
 
@@ -67,7 +67,7 @@ class Contact(Base):
     __tablename__ = "contacts"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     name = Column(String)
     email = Column(String)
     phone = Column(String)
@@ -91,12 +91,12 @@ class Opportunity(Base):
     __tablename__ = "opportunities"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String)
     value = Column(Numeric(10, 2))
-    stage = Column(String, default="lead")
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
+    stage = Column(String, default="lead", index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     expected_close_date = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -117,15 +117,15 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String)
     description = Column(Text, nullable=True)
-    status = Column(String, default="pending")
-    priority = Column(String, default="medium")
+    status = Column(String, default="pending", index=True)
+    priority = Column(String, default="medium", index=True)
     due_date = Column(DateTime, nullable=True)
-    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True)
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
+    opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -144,13 +144,13 @@ class Activity(Base):
     __tablename__ = "activities"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    type = Column(String)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    type = Column(String, index=True)
     description = Column(Text, nullable=True)
     source = Column(String, nullable=True)
     external_id = Column(String, nullable=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
+    opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True, index=True)
     scheduled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -163,18 +163,18 @@ class Email(Base):
     __tablename__ = "emails"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     gmail_id = Column(String, unique=True, index=True)
-    thread_id = Column(String, nullable=True)
+    thread_id = Column(String, nullable=True, index=True)
     subject = Column(String, nullable=True)
-    from_email = Column(String)
+    from_email = Column(String, index=True)
     to_email = Column(String)
     snippet = Column(Text, nullable=True)
     body = Column(Text, nullable=True)
     html_body = Column(Text, nullable=True)
     label_ids = Column(String, nullable=True)
-    history_id = Column(String)
-    is_read = Column(Boolean, default=False)
+    history_id = Column(String, index=True)
+    is_read = Column(Boolean, default=False, index=True)
     received_at = Column(DateTime, nullable=True)
     stored_at = Column(DateTime, default=datetime.utcnow)
 
