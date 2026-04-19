@@ -62,8 +62,8 @@ function OAuthCallbackContent() {
         <h1 className="page-title">Google Calendar OAuth</h1>
         <p className="text-muted mt-3">{message}</p>
         {status === 'success' || status === 'error' ? (
-          <a href="/settings" className="btn-primary mt-6 inline-flex">
-            Back to Settings
+          <a href="/calendar" className="btn-primary mt-6 inline-flex">
+            Back to Calendar
           </a>
         ) : null}
       </div>

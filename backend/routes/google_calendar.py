@@ -1053,7 +1053,7 @@ def complete_oauth(request: Request, payload: dict, current_user: User = Depends
     if "um-hack26" in base_url or "fly.dev" in base_url or ("localhost" not in base_url and "127.0.0.1" not in base_url):
         base_url = "https://um-hack26-zf1hkq.fly.dev"
 
-    redirect_uri = f"{base_url}/api/auth/callback/google"
+    redirect_uri = f"{base_url}/api/auth/callback/calendar"
     flow.redirect_uri = redirect_uri
     print(f"[OAuth Complete] Flow configured with redirect_uri: {redirect_uri}")
 
