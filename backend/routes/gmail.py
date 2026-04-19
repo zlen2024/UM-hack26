@@ -67,7 +67,9 @@ def authorize_gmail(request: Request, payload: Optional[dict] = None, current_us
             access_type='offline',
             include_granted_scopes='true',
             state=state,
-            prompt='consent'
+            prompt='consent',
+            code_challenge=code_challenge,
+            code_challenge_method='S256'
         )
 
         return {
