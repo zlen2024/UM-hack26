@@ -1,4 +1,17 @@
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import os
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()
+
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_KEY")
+supabase: Client | None = None
+if supabase_url and supabase_key:
+    supabase = create_client(supabase_url, supabase_key)
+
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from database import engine, Base
@@ -54,9 +67,21 @@ app.include_router(
 )
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def root():
-    return {"message": "UM CRM API"}
+    if not supabase:
+        return "<h1>Error</h1><p>Supabase not configured</p>"
+    try:
+        response = supabase.table('todos').select("*").execute()
+        todos = response.data
+        html = '<h1>Todos</h1><ul>'
+        for todo in todos:
+            html += f'<li>{todo["name"]}</li>'
+        html += '</ul>'
+        return html
+    except Exception as e:
+        return f"<h1>Error</h1><p>{str(e)}</p>"
+
 
 
 @app.get("/api/health")
