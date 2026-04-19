@@ -4,9 +4,10 @@ A full-stack CRM application built with FastAPI (backend) and Next.js (frontend)
 
 ## Prerequisites
 
-- Python 3.9+
+- Python 3.13
 - Node.js 18+
 - uv (Python package manager)
+- PostgreSQL 16+ (or Docker)
 
 ## Setup & Running
 
@@ -17,16 +18,21 @@ A full-stack CRM application built with FastAPI (backend) and Next.js (frontend)
    cd backend
    ```
 
-2. Create a virtual environment and install dependencies:
+2. Create a virtual environment with Python 3.13 and install dependencies:
    ```powershell
-   uv venv
+   uv venv --python 3.13
    .\.venv\Scripts\Activate.ps1
    uv pip install -r requirements.txt
    ```
 
-3. Run the backend server:
+3. **Database Setup**: Ensure PostgreSQL is running and set up the `.env` file:
+   - Edit `backend/.env` with your PostgreSQL connection string
+   - Default: `DATABASE_URL=postgresql://user:password@localhost:5432/um_crm`
+   - The database tables will be created automatically on first run
+
+4. Run the backend server:
    ```powershell
-   uvicorn main:app --reload
+   python -m uvicorn main:app --reload
    ```
 
    The API will be available at http://localhost:8000
@@ -79,16 +85,60 @@ Then open the app in Chrome and use **Install app** from the address bar menu.
 
 ### Demo Data Seeding
 
-Seed demo data for a user (recommended after starting the backend):
+After starting the backend, seed realistic demo data for testing:
+
 ```powershell
-python backend/seed_demo.py --email demo@example.com --password Passw0rd! --force --reset-all --contacts 100 --opportunities 140 --tasks 180 --activities 200
+cd backend
+python seed_demo.py --email demo@example.com --password Passw0rd! --reset-all --force
 ```
 
-Common flags:
-- `--force`: overwrite existing data for the email
-- `--reset-user`: delete all data for this email before seeding
-- `--reset-all`: wipe all users and data before seeding
-- `--drop-all`: drop and recreate all tables
+This will:
+- Clear any existing data and tables
+- Create fresh tables with proper schema
+- Seed 50 contacts, 75 opportunities, 100 tasks, and 150 activities
+- Generate valid email addresses for all contacts
+
+**Login credentials after seeding:**
+- Email: `demo@example.com`
+- Password: `Passw0rd!`
+
+**Seed data includes:**
+- **50 realistic contacts** with real names, companies, and phone numbers
+  - Emails generated automatically (e.g., `john.smith@techcorpsolutions.com`)
+  - Each contact has a job title and company association
+- **75 opportunities** with deal values ($10k-$500k) and various pipeline stages
+- **100 tasks** with real descriptions, priorities, and due dates
+- **150 activities** (calls, emails, meetings, demos) with realistic business notes
+
+**Available seed options:**
+- `--email EMAIL` - User email (default: `demo@example.com`)
+- `--password PASSWORD` - User password (default: `Passw0rd!`)
+- `--contacts N` - Number of contacts to seed (default: 50)
+- `--opportunities N` - Number of opportunities to seed (default: 75)
+- `--tasks N` - Number of tasks to seed (default: 100)
+- `--activities N` - Number of activities to seed (default: 150)
+- `--force` - Overwrite existing data for this email
+- `--reset-all` - Wipe all users and data before seeding (recommended for clean start)
+- `--reset-user` - Delete all data for this email only
+- `--drop-all` - Drop and recreate all tables from scratch
+
+**Examples:**
+
+Fresh start with default data:
+```powershell
+python seed_demo.py --email demo@example.com --password Passw0rd! --reset-all --force
+```
+
+Seed with custom amounts:
+```powershell
+python seed_demo.py --email myuser@example.com --password MyPassword123! --contacts 100 --opportunities 200 --reset-all --force
+```
+
+Add more data to existing user:
+```powershell
+python seed_demo.py --email demo@example.com --password Passw0rd! --contacts 25 --force
+```
+
 
 ## Features
 
