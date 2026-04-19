@@ -23,7 +23,7 @@ TOPIC_NAME = 'projects/umhack26/topics/UMHackCRM'
 from routes.google_calendar import _get_oauth_credentials, _build_pkce_pair, OAUTH_STATE_STORE
 
 @router.get("/oauth/authorize")
-def authorize_gmail(request: Request, payload: Optional[dict] = None, current_user: User = Depends(get_current_user)):
+def authorize_gmail(request: Request, current_user: User = Depends(get_current_user)):
     oauth_config = _get_oauth_credentials()
     if not oauth_config:
         raise HTTPException(status_code=400, detail="OAuth2 credentials not configured")
@@ -158,37 +158,42 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to complete OAuth callback: {str(e)}")
 
-def process_gmail_update(user_email: str, history_id: str, db: Session):
-    user = db.query(User).filter(User.google_email == user_email).first()
-    if not user or not user.google_refresh_token:
-        print(f"User {user_email} not found or no refresh token")
-        return
-
-    oauth_config = _get_oauth_credentials()
-    if not oauth_config:
-        return
-
-    config = oauth_config.get("web") or oauth_config.get("installed")
-    creds = Credentials(
-        token=user.google_access_token,
-        refresh_token=user.google_refresh_token,
-        token_uri=config.get("token_uri"),
-        client_id=config.get("client_id"),
-        client_secret=config.get("client_secret")
-    )
-
+def process_gmail_update(user_email: str, history_id: str):
+    from database import SessionLocal
+    db = SessionLocal()
     try:
-        service = build('gmail', 'v1', credentials=creds)
-        print(f"Processing push update for {user_email}, new historyId: {history_id}")
+        user = db.query(User).filter(User.google_email == user_email).first()
+        if not user or not user.google_refresh_token:
+            print(f"User {user_email} not found or no refresh token")
+            return
 
-        messages = service.users().messages().list(userId='me', maxResults=5).execute()
-        print("Recent messages:", [m['id'] for m in messages.get('messages', [])])
+        oauth_config = _get_oauth_credentials()
+        if not oauth_config:
+            return
 
-    except Exception as e:
-        print(f"Error processing gmail update: {str(e)}")
+        config = oauth_config.get("web") or oauth_config.get("installed")
+        creds = Credentials(
+            token=user.google_access_token,
+            refresh_token=user.google_refresh_token,
+            token_uri=config.get("token_uri"),
+            client_id=config.get("client_id"),
+            client_secret=config.get("client_secret")
+        )
+
+        try:
+            service = build('gmail', 'v1', credentials=creds)
+            print(f"Processing push update for {user_email}, new historyId: {history_id}")
+
+            messages = service.users().messages().list(userId='me', maxResults=5).execute()
+            print("Recent messages:", [m['id'] for m in messages.get('messages', [])])
+
+        except Exception as e:
+            print(f"Error processing gmail update: {str(e)}")
+    finally:
+        db.close()
 
 @router.post("/webhooks/gmail")
-async def gmail_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def gmail_webhook(request: Request, background_tasks: BackgroundTasks):
     envelope = await request.json()
 
     pubsub_message = envelope.get("message", {})
@@ -203,7 +208,7 @@ async def gmail_webhook(request: Request, background_tasks: BackgroundTasks, db:
         history_id = data.get("historyId")
 
         if user_email and history_id:
-            background_tasks.add_task(process_gmail_update, user_email, history_id, db)
+            background_tasks.add_task(process_gmail_update, user_email, history_id)
 
     except Exception as e:
         print(f"Webhook decode error: {str(e)}")
@@ -238,8 +243,8 @@ def renew_watch(db: Session = Depends(get_db)):
                 'labelFilterBehavior': 'INCLUDE'
             }
             service.users().watch(userId='me', body=request_body).execute()
-            successes.append(user.google_email)
+            successes.append("success")
         except Exception as e:
-            errors.append(f"{user.google_email}: {str(e)}")
+            errors.append("error")
 
     return {"renewed": successes, "errors": errors}

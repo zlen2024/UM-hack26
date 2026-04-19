@@ -68,8 +68,31 @@ def _build_pkce_pair() -> Tuple[str, str]:
     return code_verifier, code_challenge
 
 
+import os
+import json
+
 def _get_oauth_credentials():
-    """Load OAuth2 credentials from file"""
+    """Load OAuth2 credentials from env variables or fallback to file"""
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+
+    if client_id and client_secret:
+        return {
+            "web": {
+                "client_id": client_id,
+                "project_id": os.environ.get("GOOGLE_PROJECT_ID", "umhack26"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_secret": client_secret,
+                "redirect_uris": [
+                    "https://um-hack26-zf1hkq.fly.dev/api/auth/callback/google",
+                    "http://localhost:3000/api/auth/callback/google",
+                    "http://127.0.0.1:3000/api/auth/callback/google"
+                ]
+            }
+        }
+
     if not OAUTH_CREDENTIALS_PATH.exists():
         return None
     try:
