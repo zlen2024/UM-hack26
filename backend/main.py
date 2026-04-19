@@ -52,6 +52,14 @@ def ensure_user_columns() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN google_access_token TEXT"))
         if "google_refresh_token" not in columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN google_refresh_token TEXT"))
+        if "calendar_access_token" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN calendar_access_token TEXT"))
+        if "calendar_refresh_token" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN calendar_refresh_token TEXT"))
+        if "gmail_watch_expiration" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN gmail_watch_expiration TIMESTAMP"))
+        if "gmail_watch_history_id" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN gmail_watch_history_id TEXT"))
 
 ensure_activity_columns()
 ensure_user_columns()

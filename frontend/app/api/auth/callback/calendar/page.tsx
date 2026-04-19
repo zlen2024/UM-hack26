@@ -1,23 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState, Suspense } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { googleCalendar } from '@/lib/api';
 
 function OAuthCallbackContent() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState<string>('Exchanging authorization code...');
 
-  const redirectUri = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    return `${window.location.origin}/api/auth/callback/google`;
-  }, []);
-
   useEffect(() => {
     const error = searchParams.get('error');
     const code = searchParams.get('code');
     const state = searchParams.get('state');
+
     if (error) {
       setStatus('error');
       setMessage(`Authorization failed: ${error}`);
@@ -31,27 +26,44 @@ function OAuthCallbackContent() {
 
     const complete = async () => {
       try {
-        await googleCalendar.oauthComplete(code, redirectUri || undefined, state || undefined);
+        const token = localStorage.getItem('token');
+        
+        console.log('[OAuth Callback] Sending to backend:', { code: code?.slice(0, 20), state: state?.slice(0, 20) });
+        
+        const response = await fetch('/api/google-calendar/oauth/complete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ code, state })
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.detail || 'Failed to complete OAuth');
+        }
+
         setStatus('success');
-        setMessage('Authorization complete. You can return to Settings.');
-      } catch (err) {
+        setMessage('Google Calendar authorization complete. You can return to Calendar.');
+      } catch (err: any) {
         console.error('OAuth complete failed', err);
         setStatus('error');
-        setMessage('Failed to exchange code. Check console for details.');
+        setMessage(err.message || 'Failed to exchange code. Check console for details.');
       }
     };
 
     complete();
-  }, [searchParams, redirectUri]);
+  }, [searchParams]);
 
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="card card-elevated w-full max-w-lg text-center">
         <h1 className="page-title">Google Calendar OAuth</h1>
         <p className="text-muted mt-3">{message}</p>
-        {status === 'success' ? (
-          <a href="/settings" className="btn-primary mt-6 inline-flex">
-            Back to Settings
+        {status === 'success' || status === 'error' ? (
+          <a href="/calendar" className="btn-primary mt-6 inline-flex">
+            Back to Calendar
           </a>
         ) : null}
       </div>

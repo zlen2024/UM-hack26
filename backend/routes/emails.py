@@ -174,11 +174,17 @@ def sync_emails(
             ).execute()
             
             payload = msg.get('payload', {})
-            headers = payload.get('headers', {})
+            headers_list = payload.get('headers', [])
             
-            subject = headers.get('Subject', '')
-            from_email = headers.get('From', '')
-            to_email = headers.get('To', '')
+            def get_header(headers, name):
+                for h in headers:
+                    if h.get('name', '').lower() == name.lower():
+                        return h.get('value', '')
+                return ''
+            
+            subject = get_header(headers_list, 'Subject')
+            from_email = get_header(headers_list, 'From')
+            to_email = get_header(headers_list, 'To')
             snippet = msg.get('snippet', '')
             thread_id = msg.get('threadId')
             label_ids = ','.join(msg.get('labelIds', []))
@@ -192,17 +198,28 @@ def sync_emails(
             body = ''
             html_body = ''
             
+            def decode_base64(data):
+                if not data:
+                    return ''
+                try:
+                    missing_padding = len(data) % 4
+                    if missing_padding:
+                        data += '=' * (4 - missing_padding)
+                    return base64.urlsafe_b64decode(data).decode('utf-8', errors='replace')
+                except Exception:
+                    return ''
+            
             if 'parts' in payload:
                 for part in payload['parts']:
                     if part.get('mimeType') == 'text/plain' and 'body' in part and 'data' in part.get('body', {}):
-                        body = base64.b64decode(part['body']['data']).decode('utf-8', errors='replace')
+                        body = decode_base64(part['body']['data'])
                         print(f"[Sync] [{i+1}/{len(messages)}] Found text/plain body, length: {len(body)}")
                     elif part.get('mimeType') == 'text/html' and 'body' in part and 'data' in part.get('body', {}):
-                        html_body = base64.b64decode(part['body']['data']).decode('utf-8', errors='replace')
+                        html_body = decode_base64(part['body']['data'])
                         print(f"[Sync] [{i+1}/{len(messages)}] Found text/html body, length: {len(html_body)}")
             
             if not body and 'body' in payload and 'data' in payload.get('body', {}):
-                body = base64.b64decode(payload['body']['data']).decode('utf-8', errors='replace')
+                body = decode_base64(payload['body']['data'])
                 print(f"[Sync] [{i+1}/{len(messages)}] Found body in payload, length: {len(body)}")
             
             try:

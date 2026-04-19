@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-function GmailOAuthCallbackContent() {
+function OAuthCallbackContent() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState<string>('Exchanging authorization code...');
@@ -27,6 +27,9 @@ function GmailOAuthCallbackContent() {
     const complete = async () => {
       try {
         const token = localStorage.getItem('token');
+        
+        console.log('[OAuth Callback] Sending to backend:', { code: code?.slice(0, 20), state: state?.slice(0, 20) });
+        
         const response = await fetch('/api/gmail/oauth/callback', {
           method: 'POST',
           headers: {
@@ -42,7 +45,7 @@ function GmailOAuthCallbackContent() {
         }
 
         setStatus('success');
-        setMessage('Gmail authorization complete and watch started. You can return to Settings.');
+        setMessage('Google Gmail authorization complete. Watch is now active!');
       } catch (err: any) {
         console.error('OAuth complete failed', err);
         setStatus('error');
@@ -56,7 +59,7 @@ function GmailOAuthCallbackContent() {
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="card card-elevated w-full max-w-lg text-center">
-        <h1 className="page-title">Google Email OAuth</h1>
+        <h1 className="page-title">Google Gmail OAuth</h1>
         <p className="text-muted mt-3">{message}</p>
         {status === 'success' || status === 'error' ? (
           <a href="/settings" className="btn-primary mt-6 inline-flex">
@@ -68,10 +71,10 @@ function GmailOAuthCallbackContent() {
   );
 }
 
-export default function GmailOAuthCallbackPage() {
+export default function OAuthCallbackPage() {
   return (
     <Suspense fallback={<div>Loading...</div>}>
-      <GmailOAuthCallbackContent />
+      <OAuthCallbackContent />
     </Suspense>
   );
 }
