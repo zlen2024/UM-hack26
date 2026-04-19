@@ -985,7 +985,6 @@ def authorize_oauth(payload: Optional[dict] = None, current_user: User = Depends
             "scope": " ".join(SCOPES),
             "access_type": "offline",
             "prompt": "consent",
-            "include_granted_scopes": "true",
             "state": state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
