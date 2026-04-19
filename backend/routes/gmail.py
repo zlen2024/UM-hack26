@@ -288,11 +288,17 @@ def process_gmail_update(user_email: str, history_id: str, db: Session):
             ).execute()
             
             payload = msg.get('payload', {})
-            headers = payload.get('headers', {})
+            headers_list = payload.get('headers', [])
             
-            subject = headers.get('Subject', '')
-            from_email = headers.get('From', '')
-            to_email = headers.get('To', '')
+            def get_header(headers, name):
+                for h in headers:
+                    if h.get('name', '').lower() == name.lower():
+                        return h.get('value', '')
+                return ''
+            
+            subject = get_header(headers_list, 'Subject')
+            from_email = get_header(headers_list, 'From')
+            to_email = get_header(headers_list, 'To')
             snippet = msg.get('snippet', '')
             thread_id = msg.get('threadId')
             label_ids = ','.join(msg.get('labelIds', []))
