@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-function GmailOAuthCallbackContent() {
+function OAuthCallbackContent() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState<string>('Exchanging authorization code...');
@@ -27,13 +27,15 @@ function GmailOAuthCallbackContent() {
     const complete = async () => {
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch('/api/gmail/oauth/callback', {
+        const redirectUri = `${window.location.origin}/api/auth/callback/google`;
+        
+        const response = await fetch('/api/google-calendar/oauth/complete', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({ code, state })
+          body: JSON.stringify({ code, state, redirect_uri: redirectUri })
         });
 
         if (!response.ok) {
@@ -42,7 +44,7 @@ function GmailOAuthCallbackContent() {
         }
 
         setStatus('success');
-        setMessage('Gmail authorization complete and watch started. You can return to Settings.');
+        setMessage('Google Calendar authorization complete. You can return to Calendar.');
       } catch (err: any) {
         console.error('OAuth complete failed', err);
         setStatus('error');
@@ -56,11 +58,11 @@ function GmailOAuthCallbackContent() {
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="card card-elevated w-full max-w-lg text-center">
-        <h1 className="page-title">Google Email OAuth</h1>
+        <h1 className="page-title">Google Calendar OAuth</h1>
         <p className="text-muted mt-3">{message}</p>
         {status === 'success' || status === 'error' ? (
-          <a href="/settings" className="btn-primary mt-6 inline-flex">
-            Back to Settings
+          <a href="/calendar" className="btn-primary mt-6 inline-flex">
+            Back to Calendar
           </a>
         ) : null}
       </div>
@@ -68,10 +70,10 @@ function GmailOAuthCallbackContent() {
   );
 }
 
-export default function GmailOAuthCallbackPage() {
+export default function OAuthCallbackPage() {
   return (
     <Suspense fallback={<div>Loading...</div>}>
-      <GmailOAuthCallbackContent />
+      <OAuthCallbackContent />
     </Suspense>
   );
 }

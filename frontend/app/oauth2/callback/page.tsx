@@ -11,7 +11,7 @@ function OAuthCallbackContent() {
 
   const redirectUri = useMemo(() => {
     if (typeof window === 'undefined') return '';
-    return `${window.location.origin}/oauth2/callback`;
+    return `${window.location.origin}/api/auth/callback/google`;
   }, []);
 
   useEffect(() => {
