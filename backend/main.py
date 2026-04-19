@@ -31,8 +31,10 @@ Base.metadata.create_all(bind=engine)
 
 def ensure_activity_columns() -> None:
     with engine.begin() as conn:
-        result = conn.execute(text("PRAGMA table_info(activities)")).fetchall()
-        columns = {row[1] for row in result}
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'activities'"
+        )).fetchall()
+        columns = {row[0] for row in result}
         if "source" not in columns:
             conn.execute(text("ALTER TABLE activities ADD COLUMN source TEXT"))
         if "external_id" not in columns:
@@ -40,8 +42,10 @@ def ensure_activity_columns() -> None:
 
 def ensure_user_columns() -> None:
     with engine.begin() as conn:
-        result = conn.execute(text("PRAGMA table_info(users)")).fetchall()
-        columns = {row[1] for row in result}
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'users'"
+        )).fetchall()
+        columns = {row[0] for row in result}
         if "google_email" not in columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN google_email TEXT"))
         if "google_access_token" not in columns:
