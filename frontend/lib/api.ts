@@ -116,6 +116,13 @@ export const googleCalendar = {
   deleteCalendar: (id: string) => api.delete(`/google-calendar/calendar/${id}`),
 };
 
+export const gmail = {
+  status: () => api.get('/gmail/status'),
+  startWatch: () => api.post('/gmail/start-watch'),
+  stopWatch: () => api.post('/gmail/stop-watch'),
+  renewWatch: () => api.post('/gmail/renew-watch'),
+};
+
 export const emails = {
   list: (params?: any) => api.get('/emails', { params }),
   get: (id: number) => api.get(`/emails/${id}`),

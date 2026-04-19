@@ -30,7 +30,7 @@ function OAuthCallbackContent() {
         
         console.log('[OAuth Callback] Sending to backend:', { code: code?.slice(0, 20), state: state?.slice(0, 20) });
         
-        const response = await fetch('/api/google-calendar/oauth/complete', {
+        const response = await fetch('/api/gmail/oauth/callback', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -45,7 +45,7 @@ function OAuthCallbackContent() {
         }
 
         setStatus('success');
-        setMessage('Google Calendar authorization complete. You can return to Calendar.');
+        setMessage('Google Gmail authorization complete. Watch is now active!');
       } catch (err: any) {
         console.error('OAuth complete failed', err);
         setStatus('error');
@@ -59,7 +59,7 @@ function OAuthCallbackContent() {
   return (
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="card card-elevated w-full max-w-lg text-center">
-        <h1 className="page-title">Google Calendar OAuth</h1>
+        <h1 className="page-title">Google Gmail OAuth</h1>
         <p className="text-muted mt-3">{message}</p>
         {status === 'success' || status === 'error' ? (
           <a href="/settings" className="btn-primary mt-6 inline-flex">

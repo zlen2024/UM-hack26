@@ -29,6 +29,8 @@ class User(Base):
     google_email = Column(String, nullable=True, index=True)
     google_access_token = Column(String, nullable=True)
     google_refresh_token = Column(String, nullable=True)
+    gmail_watch_expiration = Column(DateTime, nullable=True)
+    gmail_watch_history_id = Column(String, nullable=True)
 
     # Google Calendar API fields
     calendar_access_token = Column(String, nullable=True)

@@ -179,9 +179,7 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
         current_user.google_email = user_email
         current_user.google_access_token = credentials.token
         current_user.google_refresh_token = credentials.refresh_token
-        db.commit()
-        print(f"[OAuth Callback] Tokens saved successfully")
-
+        
         print(f"[OAuth Callback] Setting up Gmail watch for topic: {TOPIC_NAME}")
         request_body = {
             'labelIds': ['INBOX'],
@@ -190,6 +188,15 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
         }
         watch_response = service.users().watch(userId='me', body=request_body).execute()
         print(f"[OAuth Callback] Watch response: {watch_response}")
+        
+        expiration = watch_response.get('expiration')
+        if expiration:
+            from datetime import datetime
+            current_user.gmail_watch_expiration = datetime.fromtimestamp(int(expiration) / 1000)
+        current_user.gmail_watch_history_id = watch_response.get('historyId')
+        
+        db.commit()
+        print(f"[OAuth Callback] Tokens and watch info saved successfully")
 
         # Cleanup state
         del OAUTH_STATE_STORE[state]
@@ -413,3 +420,106 @@ def renew_watch(db: Session = Depends(get_db)):
             errors.append(f"{user.google_email}: {str(e)}")
 
     return {"renewed": successes, "errors": errors}
+
+
+@router.get("/status")
+def get_gmail_status(current_user: User = Depends(get_current_user)):
+    """Check Gmail OAuth status and watch status"""
+    oauth_config = _get_oauth_credentials()
+    
+    connected = bool(current_user.google_refresh_token)
+    watch_active = False
+    watch_expiration = None
+    
+    if connected and current_user.gmail_watch_expiration:
+        from datetime import datetime
+        watch_expiration = current_user.gmail_watch_expiration
+        watch_active = watch_expiration > datetime.utcnow()
+    
+    return {
+        "connected": connected,
+        "email": current_user.google_email,
+        "watch_active": watch_active,
+        "watch_expiration": watch_expiration.isoformat() if watch_expiration else None,
+        "history_id": current_user.gmail_watch_history_id,
+        "oauth_configured": bool(oauth_config)
+    }
+
+
+@router.post("/start-watch")
+def start_watch(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Start or renew Gmail push notifications watch"""
+    if not current_user.google_refresh_token:
+        raise HTTPException(status_code=400, detail="Gmail not authorized. Please authorize first.")
+    
+    oauth_config = _get_oauth_credentials()
+    if not oauth_config:
+        raise HTTPException(status_code=400, detail="OAuth config not found")
+    
+    config = oauth_config.get("web") or oauth_config.get("installed")
+    
+    creds = Credentials(
+        token=current_user.google_access_token,
+        refresh_token=current_user.google_refresh_token,
+        token_uri=config.get("token_uri"),
+        client_id=config.get("client_id"),
+        client_secret=config.get("client_secret")
+    )
+    
+    try:
+        service = build('gmail', 'v1', credentials=creds)
+        request_body = {
+            'labelIds': ['INBOX'],
+            'topicName': TOPIC_NAME,
+            'labelFilterBehavior': 'INCLUDE'
+        }
+        watch_response = service.users().watch(userId='me', body=request_body).execute()
+        
+        expiration = watch_response.get('expiration')
+        if expiration:
+            from datetime import datetime
+            current_user.gmail_watch_expiration = datetime.fromtimestamp(int(expiration) / 1000)
+        current_user.gmail_watch_history_id = watch_response.get('historyId')
+        
+        db.commit()
+        
+        return {
+            "status": "watch_started",
+            "expiration": current_user.gmail_watch_expiration.isoformat() if current_user.gmail_watch_expiration else None,
+            "history_id": current_user.gmail_watch_history_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to start watch: {str(e)}")
+
+
+@router.post("/stop-watch")
+def stop_watch(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Stop Gmail push notifications"""
+    if not current_user.google_refresh_token:
+        raise HTTPException(status_code=400, detail="Gmail not authorized")
+    
+    oauth_config = _get_oauth_credentials()
+    if not oauth_config:
+        raise HTTPException(status_code=400, detail="OAuth config not found")
+    
+    config = oauth_config.get("web") or oauth_config.get("installed")
+    
+    creds = Credentials(
+        token=current_user.google_access_token,
+        refresh_token=current_user.google_refresh_token,
+        token_uri=config.get("token_uri"),
+        client_id=config.get("client_id"),
+        client_secret=config.get("client_secret")
+    )
+    
+    try:
+        service = build('gmail', 'v1', credentials=creds)
+        service.users().stop(userId='me').execute()
+        
+        current_user.gmail_watch_expiration = None
+        current_user.gmail_watch_history_id = None
+        db.commit()
+        
+        return {"status": "watch_stopped"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to stop watch: {str(e)}")
