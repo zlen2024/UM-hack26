@@ -115,3 +115,10 @@ export const googleCalendar = {
     api.put(`/google-calendar/calendar/${id}`, data),
   deleteCalendar: (id: string) => api.delete(`/google-calendar/calendar/${id}`),
 };
+
+export const emails = {
+  list: (params?: any) => api.get('/emails', { params }),
+  get: (id: number) => api.get(`/emails/${id}`),
+  markAsRead: (id: number) => api.post(`/emails/${id}/read`),
+  sync: () => api.post('/emails/sync'),
+};

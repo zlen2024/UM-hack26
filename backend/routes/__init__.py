@@ -8,6 +8,7 @@ from . import reports
 from . import users
 from . import agent
 from . import google_calendar
+from . import gmail
 
 __all__ = [
     'auth',
@@ -19,4 +20,5 @@ __all__ = [
     'users',
     'agent',
     'google_calendar',
+    'gmail',
 ]

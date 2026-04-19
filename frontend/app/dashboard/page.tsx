@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import { reports, tasks as tasksApi, opportunities as opportunitiesApi } from '@/lib/api';
+import { getCache, setCache, preloadUserData, getPreloadedData } from '@/lib/cache';
 import { Users, CheckSquare, DollarSign, TrendingUp, Clock, Sparkles, Target } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -12,6 +13,7 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [opportunities, setOpportunities] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -19,25 +21,51 @@ export default function DashboardPage() {
       router.push('/');
       return;
     }
-    loadDashboard();
+
+    const cachedData = getPreloadedData();
+    if (cachedData.metrics && cachedData.pipeline && cachedData.tasks && cachedData.opportunities) {
+      console.log('[Dashboard] Using cached data');
+      setMetrics(cachedData.metrics);
+      setPipeline(cachedData.pipeline);
+      setTasks(cachedData.tasks);
+      setOpportunities(cachedData.opportunities);
+      setLoading(false);
+      
+      preloadUserData().then(() => {
+        console.log('[Dashboard] Background refresh complete');
+        loadDashboard();
+      });
+    } else {
+      loadDashboard();
+    }
   }, [router]);
 
   const loadDashboard = async () => {
     try {
+      setIsRefreshing(true);
       const [metricsRes, pipelineRes, tasksRes, oppsRes] = await Promise.all([
         reports.dashboard(),
         reports.pipeline(),
         tasksApi.list(),
         opportunitiesApi.list(),
       ]);
+      
       setMetrics(metricsRes.data);
       setPipeline(pipelineRes.data);
       setTasks(tasksRes.data);
       setOpportunities(oppsRes.data);
+      
+      setCache('metrics', metricsRes.data);
+      setCache('pipeline', pipelineRes.data);
+      setCache('tasks', tasksRes.data);
+      setCache('opportunities', oppsRes.data);
+      
+      console.log('[Dashboard] Data loaded and cached');
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 

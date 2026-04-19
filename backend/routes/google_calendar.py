@@ -7,8 +7,12 @@ import time
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 from uuid import uuid4
+import os
 import xml.etree.ElementTree as ET
 import json
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy import text
@@ -44,7 +48,6 @@ router = APIRouter()
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 XML_PATH = DATA_DIR / "google_calendar.xml"
-OAUTH_CREDENTIALS_PATH = DATA_DIR / "oauth_credentials.json"
 TOKENS_DIR = DATA_DIR / "tokens"
 DEFAULT_TEST_EMAIL = "fakhrulhakimy93@gmail.com"
 SCOPES = ['https://www.googleapis.com/auth/calendar']
@@ -69,15 +72,24 @@ def _build_pkce_pair() -> Tuple[str, str]:
 
 
 def _get_oauth_credentials():
-    """Load OAuth2 credentials from file"""
-    if not OAUTH_CREDENTIALS_PATH.exists():
+    """Load OAuth2 credentials from environment variables"""
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        print("OAuth2 credentials not configured in environment variables")
         return None
-    try:
-        with open(OAUTH_CREDENTIALS_PATH, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading OAuth credentials: {e}")
-        return None
+    
+    return {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "redirect_uris": [os.getenv("GOOGLE_REDIRECT_URI")] if os.getenv("GOOGLE_REDIRECT_URI") else []
+        }
+    }
 
 
 def _build_calendar_service_oauth(user_id: int):
@@ -367,7 +379,7 @@ def get_credentials(current_user: User = Depends(get_current_user)):
 
     cred = user_node.find("credentials")
     test_email = cred.get("test_email") if cred is not None else None
-    oauth_configured = OAUTH_CREDENTIALS_PATH.exists()
+    oauth_configured = _get_oauth_credentials() is not None
     token_file = TOKENS_DIR / f"user_{current_user.id}_token.json"
     authorized = False
     if token_file.exists():
@@ -394,24 +406,19 @@ def save_credentials(
     if payload.api_key:
         raise HTTPException(
             status_code=400,
-            detail="API keys are not supported. Upload OAuth2 credentials JSON."
+            detail="API keys are not supported. Use OAuth2 credentials from .env file."
         )
 
     if payload.oauth_credentials:
-        creds = payload.oauth_credentials
-        if "web" not in creds and "installed" not in creds:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid credentials format. Expected 'web' or 'installed' key"
-            )
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with open(OAUTH_CREDENTIALS_PATH, 'w') as f:
-            json.dump(creds, f, indent=2)
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth credentials are now configured via .env file. No need to upload."
+        )
 
     if not _get_oauth_credentials():
         raise HTTPException(
             status_code=400,
-            detail="OAuth2 credentials not configured. Upload credentials JSON."
+            detail="OAuth2 credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env file."
         )
 
     tree = _ensure_tree()
@@ -929,35 +936,6 @@ def delete_event(
         db.commit()
 
     return {"status": "deleted"}
-
-
-@router.post("/oauth/upload-credentials")
-def upload_oauth_credentials(payload: dict, current_user: User = Depends(get_current_user)):
-    """
-    Upload OAuth2 credentials JSON from Google Cloud Console
-    Expected payload: {"credentials": {...oauth2 credentials...}} or raw JSON
-    """
-    try:
-        creds = payload.get("credentials") or payload
-        if not isinstance(creds, dict):
-            raise ValueError("Credentials payload must be a JSON object")
-        
-        # Validate it's the correct format (should have 'web' or 'installed' key)
-        if "web" not in creds and "installed" not in creds:
-            raise ValueError("Invalid credentials format. Expected 'web' or 'installed' key")
-        
-        # Save to file
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with open(OAUTH_CREDENTIALS_PATH, 'w') as f:
-            json.dump(creds, f, indent=2)
-        
-        return {
-            "status": "uploaded",
-            "message": "OAuth2 credentials saved successfully",
-            "path": str(OAUTH_CREDENTIALS_PATH)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error saving credentials: {str(e)}")
 
 
 @router.post("/oauth/authorize")

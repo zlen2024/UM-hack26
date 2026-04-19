@@ -1,14 +1,17 @@
+import os
 from pathlib import Path
 from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent
-SQLALCHEMY_DATABASE_URL = f"sqlite:///{BASE_DIR / 'crm.db'}"
+load_dotenv()
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Use NullPool for Supabase connection pooling (prevents prepared statement issues)
+engine = create_engine(DATABASE_URL, poolclass=NullPool)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
