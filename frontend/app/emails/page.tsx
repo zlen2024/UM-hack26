@@ -2,8 +2,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { emails } from '@/lib/api';
-import { Mail, RefreshCw, ChevronRight, ChevronDown, User, Clock, ArrowLeft } from 'lucide-react';
+import { emails, gmail } from '@/lib/api';
+import { Mail, RefreshCw, ChevronRight, ChevronDown, User, Clock, ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
 
 export default function EmailsPage() {
   const router = useRouter();
@@ -13,6 +13,7 @@ export default function EmailsPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [gmailConnected, setGmailConnected] = useState(false);
+  const [gmailStatus, setGmailStatus] = useState<any>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -25,17 +26,26 @@ export default function EmailsPage() {
       const userData = localStorage.getItem('user');
       if (userData) {
         setUser(JSON.parse(userData));
-        if (JSON.parse(userData).google_refresh_token) {
-          setGmailConnected(true);
-        }
       }
 
+      await loadGmailStatus();
       await loadEmails();
       setLoading(false);
     };
 
     loadData();
   }, []);
+
+  const loadGmailStatus = async () => {
+    try {
+      const res = await gmail.status();
+      setGmailStatus(res.data);
+      setGmailConnected(res.data.connected);
+    } catch (err) {
+      console.error('Failed to load Gmail status:', err);
+      setGmailConnected(false);
+    }
+  };
 
   const loadEmails = async () => {
     try {
@@ -135,14 +145,31 @@ export default function EmailsPage() {
               <Mail className="w-5 h-5" />
               Emails
             </h1>
-            <button
-              onClick={handleSync}
-              disabled={syncing}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing...' : 'Sync'}
-            </button>
+            <div className="flex items-center gap-3">
+              {gmailStatus && (
+                <div className="flex items-center gap-2 text-sm">
+                  {gmailStatus.watch_active ? (
+                    <span className="flex items-center gap-1 text-green-600">
+                      <CheckCircle className="w-4 h-4" />
+                      Watch Active
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-orange-500">
+                      <XCircle className="w-4 h-4" />
+                      Watch Inactive
+                    </span>
+                  )}
+                </div>
+              )}
+              <button
+                onClick={handleSync}
+                disabled={syncing}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+                {syncing ? 'Syncing...' : 'Sync'}
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto">
