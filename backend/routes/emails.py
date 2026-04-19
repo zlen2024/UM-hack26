@@ -129,12 +129,19 @@ def sync_emails(
     db: Session = Depends(get_db),
 ):
     """Sync emails from Gmail API"""
+    print(f"[Sync] [{datetime.now().isoformat()}] ==== MANUAL SYNC START ====")
+    print(f"[Sync] User ID: {current_user.id}, Email: {current_user.email}")
+    print(f"[Sync] Has refresh token: {bool(current_user.google_refresh_token)}")
+    
     if not current_user.google_refresh_token:
+        print(f"[Sync] ERROR: Gmail not connected for user {current_user.id}")
         raise HTTPException(status_code=400, detail="Gmail not connected")
     
     try:
+        print(f"[Sync] Building Gmail service...")
         service = _build_gmail_service(current_user)
         
+        print(f"[Sync] Fetching messages.list() from Gmail API...")
         results = service.users().messages().list(
             userId='me',
             maxResults=50,
@@ -142,10 +149,13 @@ def sync_emails(
         ).execute()
         
         messages = results.get('messages', [])
+        print(f"[Sync] Found {len(messages)} messages in inbox")
+        
         new_emails = 0
         
-        for msg_meta in messages:
+        for i, msg_meta in enumerate(messages):
             msg_id = msg_meta['id']
+            print(f"[Sync] [{i+1}/{len(messages)}] Checking message: {msg_id}")
             
             existing = db.query(Email).filter(
                 Email.gmail_id == msg_id,
@@ -153,8 +163,10 @@ def sync_emails(
             ).first()
             
             if existing:
+                print(f"[Sync] [{i+1}/{len(messages)}] Already exists in DB, skipping")
                 continue
             
+            print(f"[Sync] [{i+1}/{len(messages)}] Fetching full message details...")
             msg = service.users().messages().get(
                 userId='me',
                 id=msg_id,
@@ -172,24 +184,34 @@ def sync_emails(
             label_ids = ','.join(msg.get('labelIds', []))
             history_id = msg.get('historyId', '')
             
+            print(f"[Sync] [{i+1}/{len(messages)}] Subject: {subject[:50]}...")
+            print(f"[Sync] [{i+1}/{len(messages)}] From: {from_email}")
+            print(f"[Sync] [{i+1}/{len(messages)}] To: {to_email}")
+            print(f"[Sync] [{i+1}/{len(messages)}] Labels: {label_ids}")
+            
             body = ''
             html_body = ''
             
             if 'parts' in payload:
                 for part in payload['parts']:
-                    if part.get('mimeType') == 'text/plain' and 'data' in part.get('body', {}):
+                    if part.get('mimeType') == 'text/plain' and 'body' in part and 'data' in part.get('body', {}):
                         body = base64.b64decode(part['body']['data']).decode('utf-8', errors='replace')
-                    elif part.get('mimeType') == 'text/html' and 'data' in part.get('body', {}):
+                        print(f"[Sync] [{i+1}/{len(messages)}] Found text/plain body, length: {len(body)}")
+                    elif part.get('mimeType') == 'text/html' and 'body' in part and 'data' in part.get('body', {}):
                         html_body = base64.b64decode(part['body']['data']).decode('utf-8', errors='replace')
+                        print(f"[Sync] [{i+1}/{len(messages)}] Found text/html body, length: {len(html_body)}")
             
-            if not body and 'body' in payload and 'data' in payload['body']:
+            if not body and 'body' in payload and 'data' in payload.get('body', {}):
                 body = base64.b64decode(payload['body']['data']).decode('utf-8', errors='replace')
+                print(f"[Sync] [{i+1}/{len(messages)}] Found body in payload, length: {len(body)}")
             
             try:
                 internal_date = int(msg.get('internalDate', 0)) / 1000
                 received_at = datetime.fromtimestamp(internal_date)
             except:
                 received_at = datetime.utcnow()
+            
+            print(f"[Sync] [{i+1}/{len(messages)}] Timestamp: {received_at.isoformat()}")
             
             email_record = Email(
                 user_id=current_user.id,
@@ -207,9 +229,13 @@ def sync_emails(
                 received_at=received_at,
             )
             db.add(email_record)
+            print(f"[Sync] [{i+1}/{len(messages)}] Stored email ID: {email_record.id if email_record.id else 'pending'}")
             new_emails += 1
         
+        print(f"[Sync] Committing {new_emails} new emails to database...")
         db.commit()
+        print(f"[Sync] SUCCESS - {new_emails} new emails stored")
+        print(f"[Sync] ==== MANUAL SYNC COMPLETE ====")
         
         return {
             "status": "synced",
@@ -218,4 +244,7 @@ def sync_emails(
         }
         
     except Exception as e:
+        print(f"[Sync] ERROR: {str(e)}")
+        import traceback
+        print(f"[Sync] Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
