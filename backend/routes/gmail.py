@@ -117,7 +117,9 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
 
         if state not in OAUTH_STATE_STORE:
             print(f"[OAuth Callback] ERROR: State not in store - {state}")
-            raise HTTPException(status_code=400, detail="Invalid state")
+            print(f"[OAuth Callback] Available states: {list(OAUTH_STATE_STORE.keys())[:5]}")
+            print(f"[OAuth Callback] Total states in store: {len(OAUTH_STATE_STORE)}")
+            raise HTTPException(status_code=400, detail="Invalid state. Please re-authorize.")
 
         code_verifier, expires_at = OAUTH_STATE_STORE[state]
         print(f"[OAuth Callback] State found - expires at: {expires_at}, remaining: {expires_at - datetime.now().timestamp()}s")
@@ -160,8 +162,12 @@ async def gmail_oauth_callback(request: Request, db: Session = Depends(get_db), 
         print(f"[OAuth Callback] Flow configured with redirect_uri: {redirect_uri}")
 
         print(f"[OAuth Callback] Fetching token with code_verifier...")
-        flow.fetch_token(code=code, code_verifier=code_verifier)
-        print(f"[OAuth Callback] Token fetched successfully")
+        try:
+            flow.fetch_token(code=code, code_verifier=code_verifier)
+            print(f"[OAuth Callback] Token fetched successfully")
+        except Exception as e:
+            print(f"[OAuth Callback] Token fetch error: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Token fetch failed: {str(e)}")
 
         credentials = flow.credentials
         print(f"[OAuth Callback] Access token: {credentials.token[:30] if credentials.token else 'None'}...")
