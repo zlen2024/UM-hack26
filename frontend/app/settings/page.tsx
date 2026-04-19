@@ -107,14 +107,35 @@ export default function SettingsPage() {
   };
 
   const handleConnect = (key: string) => {
+    if (key === 'calendar' || key === 'email') {
+      return;
+    }
     setActiveIntegration(key);
-    if (key === 'calendar') {
-      setIntegrationFields({
-        oauthJson: '',
-        testEmail: calendarTestEmail || 'fakhrulhakimy93@gmail.com',
+    setIntegrationFields({});
+  };
+
+  const handleConnectGoogleCalendar = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/gmail/oauth/authorize', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
-    } else {
-      setIntegrationFields({});
+      if (response.ok) {
+        const data = await response.json();
+        if (data.authorization_url) {
+          console.log('[Settings] Redirecting to Google OAuth...');
+          window.location.href = data.authorization_url;
+        } else {
+          alert('Authorization URL not received');
+        }
+      } else {
+        alert('Failed to start OAuth');
+      }
+    } catch (err) {
+      console.error('OAuth error:', err);
+      alert('Error connecting to Google');
     }
   };
 
@@ -283,7 +304,7 @@ export default function SettingsPage() {
                   name="Google Calendar"
                   desc="Sync events, meetings, and reminders."
                   status={integrationStatus.calendar ? 'on' : 'off'}
-                  onConnect={() => handleConnect('calendar')}
+                  onConnect={handleConnectGoogleCalendar}
                   onDisconnect={() => handleDisconnect('calendar')}
                 />
                 <IntegrationBox
