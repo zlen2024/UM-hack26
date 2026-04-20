@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -149,21 +150,19 @@ def send_whatsapp_message(phone_number_id: str, access_token: str, recipient: st
 
 @router.get("/webhook")
 def verify_webhook(
-    hub_mode: str = Query(...),
-    hub_verify_token: str = Query(...),
-    hub_challenge: Optional[str] = Query(None),
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
     db: Session = Depends(get_db),
 ):
     """Verify webhook with Meta (GET request)"""
-    display_phone = Query(default=None)
-    
     if hub_mode == "subscribe":
         config = db.query(WhatsAppPhoneNumber).filter(
             WhatsAppPhoneNumber.verify_token == hub_verify_token
         ).first()
         
-        if config:
-            return {"hub.challenge": hub_challenge or "Webhook verified!"}
+        if config and hub_challenge:
+            return PlainTextResponse(content=hub_challenge)
     
     raise HTTPException(status_code=403, detail="Webhook verification failed")
 
