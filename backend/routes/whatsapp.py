@@ -3,14 +3,10 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from database import get_db
-from models import User
-import os
-import hmac
-import hashlib
+from models import User, WhatsAppPhoneNumber
+import requests
 
 router = APIRouter()
-
-VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "whatsapp_verify_token_12345")
 
 
 class WhatsAppWebhookPayload(BaseModel):
@@ -49,17 +45,6 @@ class WhatsAppChange(BaseModel):
 class WhatsAppEntry(BaseModel):
     id: str
     changes: List[WhatsAppChange]
-
-
-def verify_webhook_token(mode: str, token: str, challenge: Optional[str] = None) -> bool:
-    """Verify the webhook token from Meta"""
-    expected_token = VERIFY_TOKEN
-    if mode == "subscribe":
-        if token == expected_token:
-            return True
-    elif mode == "hub.mode" and challenge:
-        return True
-    return False
 
 
 def extract_message_data(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -116,10 +101,42 @@ def extract_message_data(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
 
-def find_user_by_agent_phone(db: Session, display_phone: str) -> Optional[User]:
-    """Find user by their agent phone number"""
-    user = db.query(User).filter(User.agent_phone_number == display_phone).first()
-    return user
+def find_whatsapp_config(db: Session, display_phone: str) -> Optional[WhatsAppPhoneNumber]:
+    """Find WhatsApp config by display phone number"""
+    config = db.query(WhatsAppPhoneNumber).filter(
+        WhatsAppPhoneNumber.display_phone_number == display_phone
+    ).first()
+    return config
+
+
+def send_whatsapp_message(phone_number_id: str, access_token: str, recipient: str, message: str) -> Dict[str, Any]:
+    """Send WhatsApp message via Meta API"""
+    url = f"https://graph.facebook.com/v25.0/{phone_number_id}/messages"
+    
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "text",
+        "text": {
+            "preview_url": False,
+            "body": message
+        }
+    }
+    
+    response = requests.post(url, headers=headers, json=data)
+    result = response.json()
+    
+    if response.status_code >= 400:
+        print(f"[WhatsApp] Error sending message: {result}")
+        return {"success": False, "error": result}
+    
+    return {"success": True, "response": result}
 
 
 @router.get("/webhook")
@@ -127,13 +144,19 @@ def verify_webhook(
     hub_mode: str = Query(...),
     hub_verify_token: str = Query(...),
     hub_challenge: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
 ):
     """Verify webhook with Meta (GET request)"""
-    if hub_verify_token == VERIFY_TOKEN:
-        if hub_mode == "subscribe":
-            return {"hub_challenge": "Webhook verified successfully!"}
-        elif hub_mode == "hub.mode" and hub_challenge:
-            return {"hub_challenge": hub_challenge}
+    display_phone = Query(default=None)
+    
+    if hub_mode == "subscribe":
+        config = db.query(WhatsAppPhoneNumber).filter(
+            WhatsAppPhoneNumber.verify_token == hub_verify_token
+        ).first()
+        
+        if config:
+            return {"hub.challenge": hub_challenge or "Webhook verified!"}
+    
     raise HTTPException(status_code=403, detail="Webhook verification failed")
 
 
@@ -149,7 +172,11 @@ def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
     contact = extracted["contact"]
     message = extracted["message"]
 
-    user = find_user_by_agent_phone(db, display_phone)
+    whatsapp_config = find_whatsapp_config(db, display_phone)
+    if not whatsapp_config:
+        return {"status": "ignored", "reason": "whatsapp_config_not_found"}
+
+    user = db.query(User).filter(User.id == whatsapp_config.user_id).first()
     if not user:
         return {"status": "ignored", "reason": "user_not_found"}
 
@@ -164,4 +191,64 @@ def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
 
     result = process_whatsapp_message(message_data)
 
+    response_text = result.get("response", "")
+    if response_text:
+        send_result = send_whatsapp_message(
+            phone_number_id=whatsapp_config.phone_number_id,
+            access_token=whatsapp_config.access_token,
+            recipient=message["from"],
+            message=response_text
+        )
+        result["sent"] = send_result
+
     return {"status": "processed", "result": result}
+
+
+@router.post("/config")
+def create_whatsapp_config(
+    phone_number_id: str,
+    display_phone_number: str,
+    access_token: str,
+    verify_token: str,
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """Create or update WhatsApp phone number configuration"""
+    existing = db.query(WhatsAppPhoneNumber).filter(
+        WhatsAppPhoneNumber.phone_number_id == phone_number_id
+    ).first()
+    
+    if existing:
+        existing.display_phone_number = display_phone_number
+        existing.access_token = access_token
+        existing.verify_token = verify_token
+        existing.user_id = user_id
+    else:
+        config = WhatsAppPhoneNumber(
+            phone_number_id=phone_number_id,
+            display_phone_number=display_phone_number,
+            access_token=access_token,
+            verify_token=verify_token,
+            user_id=user_id
+        )
+        db.add(config)
+    
+    db.commit()
+    return {"status": "created", "phone_number_id": phone_number_id}
+
+
+@router.get("/config/{phone_number_id}")
+def get_whatsapp_config(phone_number_id: str, db: Session = Depends(get_db)):
+    """Get WhatsApp phone number configuration"""
+    config = db.query(WhatsAppPhoneNumber).filter(
+        WhatsAppPhoneNumber.phone_number_id == phone_number_id
+    ).first()
+    
+    if not config:
+        raise HTTPException(status_code=404, detail="Config not found")
+    
+    return {
+        "phone_number_id": config.phone_number_id,
+        "display_phone_number": config.display_phone_number,
+        "user_id": config.user_id,
+    }

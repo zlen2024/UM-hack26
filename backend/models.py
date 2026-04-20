@@ -39,6 +39,8 @@ class User(Base):
     # WhatsApp Business API fields
     agent_phone_number = Column(String, nullable=True, index=True)
 
+    whatsapp_numbers = relationship("WhatsAppPhoneNumber", back_populates="user")
+
     contacts = relationship(
         "Contact", back_populates="owner", foreign_keys="Contact.user_id"
     )
@@ -153,3 +155,17 @@ class Email(Base):
     stored_at = Column(DateTime, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="emails")
+
+
+class WhatsAppPhoneNumber(Base):
+    __tablename__ = "whatsapp_phone_numbers"
+
+    phone_number_id = Column(String, primary_key=True)
+    display_phone_number = Column(String, unique=True, index=True)
+    access_token = Column(String, nullable=False)
+    verify_token = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="whatsapp_numbers")

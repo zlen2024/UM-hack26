@@ -64,8 +64,29 @@ def ensure_user_columns() -> None:
         if "agent_phone_number" not in columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN agent_phone_number TEXT"))
 
+def ensure_whatsapp_table() -> None:
+    with engine.begin() as conn:
+        result = conn.execute(text(
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'whatsapp_phone_numbers'"
+        )).fetchone()
+        if not result:
+            conn.execute(text("""
+                CREATE TABLE whatsapp_phone_numbers (
+                    phone_number_id VARCHAR PRIMARY KEY,
+                    display_phone_number VARCHAR UNIQUE,
+                    access_token VARCHAR NOT NULL,
+                    verify_token VARCHAR NOT NULL,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX idx_whatsapp_user_id ON whatsapp_phone_numbers(user_id)"))
+            conn.execute(text("CREATE INDEX idx_whatsapp_display_phone ON whatsapp_phone_numbers(display_phone_number)"))
+
 ensure_activity_columns()
 ensure_user_columns()
+ensure_whatsapp_table()
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
