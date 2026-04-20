@@ -99,7 +99,7 @@ def extract_message_data(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not display_phone_number or not contact_data or not message_data:
             return None
 
-return {
+        return {
             "display_phone_number": display_phone_number,
             "contact": contact_data,
             "message": message_data,
