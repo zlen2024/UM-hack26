@@ -169,3 +169,17 @@ class WhatsAppPhoneNumber(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="whatsapp_numbers")
+
+
+class AgentSession(Base):
+    __tablename__ = "agent_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(String, unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    messages = Column(Text, nullable=True)  # JSON string
+    state = Column(Text, nullable=True)  # JSON string
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
