@@ -2,8 +2,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { googleCalendar } from '@/lib/api';
-import { User, Mail, Calendar, CheckCircle2, XCircle, Zap, Cloud, ShieldCheck } from 'lucide-react';
+import { googleCalendar, whatsapp } from '@/lib/api';
+import { User, Mail, Calendar, CheckCircle2, XCircle, Zap, Cloud, ShieldCheck, MessageSquare } from 'lucide-react';
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -24,9 +24,11 @@ export default function SettingsPage() {
     zapier: false,
     cloud: false,
     sso: false,
+    whatsapp: false,
   });
   const [activeIntegration, setActiveIntegration] = useState<null | string>(null);
   const [integrationFields, setIntegrationFields] = useState<any>({});
+  const [whatsappConfig, setWhatsappConfig] = useState<any>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -48,6 +50,7 @@ export default function SettingsPage() {
         zapier: localStorage.getItem('integration_zapier') === 'on',
         cloud: localStorage.getItem('integration_cloud') === 'on',
         sso: localStorage.getItem('integration_sso') === 'on',
+        whatsapp: localStorage.getItem('integration_whatsapp') === 'on',
       };
       if (isMounted) {
         setIntegrationStatus(baseStatus);
@@ -78,6 +81,25 @@ export default function SettingsPage() {
     };
 
     loadSettings();
+
+    const checkWhatsAppStatus = async () => {
+      const storedPhoneId = localStorage.getItem('whatsapp_phone_number_id');
+      if (storedPhoneId) {
+        try {
+          const response = await whatsapp.getConfig(storedPhoneId);
+          if (response.data) {
+            setWhatsappConfig(response.data);
+            localStorage.setItem('integration_whatsapp', 'on');
+            setIntegrationStatus((prev) => ({ ...prev, whatsapp: true }));
+          }
+        } catch (error) {
+          localStorage.removeItem('whatsapp_phone_number_id');
+          localStorage.setItem('integration_whatsapp', 'off');
+        }
+      }
+    };
+    checkWhatsAppStatus();
+
     return () => {
       isMounted = false;
     };
@@ -143,6 +165,8 @@ export default function SettingsPage() {
     try {
       if (key === 'calendar') {
         await googleCalendar.clearCredentials();
+      } else if (key === 'whatsapp') {
+        localStorage.removeItem('whatsapp_phone_number_id');
       }
       localStorage.setItem(`integration_${key}`, 'off');
       setIntegrationStatus((prev) => ({ ...prev, [key]: false }));
@@ -184,6 +208,28 @@ export default function SettingsPage() {
           configured: Boolean(status.data?.oauth_configured),
           authorized: Boolean(status.data?.authorized),
         });
+      } else if (key === 'whatsapp') {
+        const userData = localStorage.getItem('user');
+        const user = userData ? JSON.parse(userData) : null;
+        if (!user?.id) {
+          window.alert('User not found. Please login again.');
+          return;
+        }
+        await whatsapp.createConfig({
+          phone_number_id: fields.phone_number_id,
+          display_phone_number: fields.display_phone_number,
+          access_token: fields.access_token,
+          verify_token: fields.verify_token,
+          user_id: user.id,
+        });
+        localStorage.setItem('whatsapp_phone_number_id', fields.phone_number_id);
+        localStorage.setItem(`integration_${key}`, 'on');
+        setIntegrationStatus((prev) => ({ ...prev, [key]: true }));
+        setWhatsappConfig({
+          phone_number_id: fields.phone_number_id,
+          display_phone_number: fields.display_phone_number,
+          user_id: user.id,
+        });
       } else {
         localStorage.setItem(`integration_${key}`, 'on');
         setIntegrationStatus((prev) => ({ ...prev, [key]: true }));
@@ -191,6 +237,7 @@ export default function SettingsPage() {
       setActiveIntegration(null);
     } catch (error) {
       console.error('Failed to save integration', error);
+      window.alert('Failed to save integration. Check console for details.');
     }
   };
 
@@ -331,6 +378,14 @@ export default function SettingsPage() {
                   onConnect={() => handleConnect('sso')}
                   onDisconnect={() => handleDisconnect('sso')}
                 />
+                <IntegrationBox
+                  icon={<MessageSquare size={22} className="text-green-500" />}
+                  name="WhatsApp Bot"
+                  desc="Receive and reply to WhatsApp messages."
+                  status={integrationStatus.whatsapp ? 'on' : 'off'}
+                  onConnect={() => handleConnect('whatsapp')}
+                  onDisconnect={() => handleDisconnect('whatsapp')}
+                />
               </div>
               {activeIntegration && (
                 <IntegrationModal
@@ -456,6 +511,97 @@ function IntegrationModal({ type, onClose, onSave, fields, setFields }: {
     placeholder = 'provider-id';
     fieldKey = 'providerId';
   }
+
+  if (type === 'whatsapp') {
+    const webhookUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/api/whatsapp/webhook`;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+        <div className="modal-panel w-full max-w-lg p-6 relative animate-fade-up max-h-[90vh] overflow-y-auto">
+          <button className="absolute top-3 right-3 text-muted" onClick={onClose}>&times;</button>
+          <h3 className="text-lg font-semibold text-ink mb-2">Configure WhatsApp Bot</h3>
+          <p className="text-sm text-muted mb-4">Enter your WhatsApp Business API credentials below.</p>
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              onSave(type, fields);
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Phone Number ID</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="1067947496408186"
+                value={fields.phone_number_id || ''}
+                onChange={e => setFields({ ...fields, phone_number_id: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Display Phone Number</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="+1234567890"
+                value={fields.display_phone_number || ''}
+                onChange={e => setFields({ ...fields, display_phone_number: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Access Token</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="EAAZBKKZBYcZC7s..."
+                value={fields.access_token || ''}
+                onChange={e => setFields({ ...fields, access_token: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Verify Token</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="your_verify_token"
+                value={fields.verify_token || ''}
+                onChange={e => setFields({ ...fields, verify_token: e.target.value })}
+                required
+              />
+            </div>
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+              <label className="block text-sm font-semibold text-ink mb-2">Webhook URL</label>
+              <div className="flex items-center gap-2">
+                <input
+                  className="input-field text-sm flex-1"
+                  type="text"
+                  value={webhookUrl}
+                  readOnly
+                />
+                <button
+                  type="button"
+                  className="btn-ghost text-xs whitespace-nowrap"
+                  onClick={() => navigator.clipboard.writeText(webhookUrl)}
+                >
+                  Copy
+                </button>
+              </div>
+              <p className="text-xs text-muted mt-2">
+                Configure this URL in your Meta WhatsApp Cloud API webhook settings.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn-primary">Save Configuration</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
       <div className="modal-panel w-full max-w-md p-6 relative animate-fade-up">

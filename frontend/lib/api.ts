@@ -129,3 +129,16 @@ export const emails = {
   markAsRead: (id: number) => api.post(`/emails/${id}/read`),
   sync: () => api.post('/emails/sync'),
 };
+
+export const whatsapp = {
+  getConfig: (phone_number_id: string) =>
+    api.get(`/whatsapp/config/${phone_number_id}`),
+  createConfig: (data: {
+    phone_number_id: string;
+    display_phone_number: string;
+    access_token: string;
+    verify_token: string;
+    user_id: number;
+  }) => api.post('/whatsapp/config', data),
+  status: () => api.get('/whatsapp/status'),
+};
