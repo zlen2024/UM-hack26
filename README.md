@@ -1,4 +1,4 @@
-# UM CRM - Simple CRM Application
+# Kacip CRM - Simple CRM Application
 
 A full-stack CRM application built with FastAPI (backend) and Next.js (frontend).
 

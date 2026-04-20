@@ -2,13 +2,13 @@ import './globals.css';
 import type { Metadata, Viewport } from 'next';
 
 export const metadata: Metadata = {
-  title: 'UM CRM',
+  title: 'Kacip CRM',
   description: 'Simple CRM Application',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'UM CRM',
+    title: 'Kacip CRM',
   },
   icons: {
     icon: [

@@ -12,7 +12,8 @@ import {
   Bot,
   Settings,
   LogOut,
-  Mail
+  Mail,
+  MessageCircle
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -23,6 +24,7 @@ const navItems = [
   { href: '/tasks', label: 'Tasks', icon: CheckSquare },
   { href: '/calendar', label: 'Calendar', icon: Calendar },
   { href: '/emails', label: 'Emails', icon: Mail },
+  { href: '/whatsapp', label: 'WhatsApp', icon: MessageCircle },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
 ];
 
@@ -41,7 +43,7 @@ export default function Sidebar() {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    router.push('/');
+    router.push('/login');
   };
 
   useEffect(() => {
@@ -136,11 +138,11 @@ export default function Sidebar() {
         <div className="flex items-center justify-between md:justify-start gap-3">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex items-center justify-center shadow-soft">
-              <span className="text-sm font-semibold">UM</span>
+              <span className="text-sm font-semibold">KC</span>
             </div>
             <div>
               <div className="page-kicker">CRM</div>
-              <div className="text-lg font-semibold text-ink">Studio</div>
+              <div className="text-lg font-semibold text-ink">Kacip</div>
             </div>
           </div>
           <span className="pill hidden md:inline-flex">All Teams</span>

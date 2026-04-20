@@ -1,6 +1,6 @@
 {
-  "name": "UM CRM",
-  "short_name": "UM CRM",
+  "name": "Kacip CRM",
+  "short_name": "Kacip CRM",
   "description": "Shared CRM workspace",
   "start_url": "/dashboard",
   "scope": "/",
