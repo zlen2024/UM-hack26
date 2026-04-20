@@ -99,7 +99,7 @@ def extract_message_data(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not display_phone_number or not contact_data or not message_data:
             return None
 
-        return {
+return {
             "display_phone_number": display_phone_number,
             "contact": contact_data,
             "message": message_data,
@@ -107,6 +107,7 @@ def extract_message_data(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
     except Exception as e:
         print(f"[WhatsApp] Error extracting message data: {e}")
+        print(f"[WhatsApp] Raw payload that failed: {payload}")
         return None
 
 
@@ -156,6 +157,8 @@ def verify_webhook(
     db: Session = Depends(get_db),
 ):
     """Verify webhook with Meta (GET request)"""
+    print(f"[WhatsApp] Webhook verification - hub_mode: {hub_mode}, hub_verify_token: {hub_verify_token}, hub_challenge: {hub_challenge}")
+    
     if hub_mode == "subscribe":
         config = db.query(WhatsAppPhoneNumber).filter(
             WhatsAppPhoneNumber.verify_token == hub_verify_token
@@ -170,7 +173,10 @@ def verify_webhook(
 @router.post("/webhook")
 def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
     """Handle incoming WhatsApp messages from Meta"""
+    print(f"[WhatsApp] Received webhook payload: {payload}")
+    
     extracted = extract_message_data(payload)
+    print(f"[WhatsApp] Extracted data: {extracted}")
 
     if not extracted:
         return {"status": "ignored", "reason": "no_valid_message"}
@@ -180,11 +186,19 @@ def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
     message = extracted["message"]
 
     whatsapp_config = find_whatsapp_config(db, display_phone)
+    print(f"[WhatsApp] Looking for config with display_phone: {display_phone}")
+    print(f"[WhatsApp] Config found: {whatsapp_config}")
+    
     if not whatsapp_config:
+        print(f"[WhatsApp] Config not found for display_phone: {display_phone}")
         return {"status": "ignored", "reason": "whatsapp_config_not_found"}
 
     user = db.query(User).filter(User.id == whatsapp_config.user_id).first()
+    print(f"[WhatsApp] Looking for user with id: {whatsapp_config.user_id}")
+    print(f"[WhatsApp] User found: {user}")
+    
     if not user:
+        print(f"[WhatsApp] User not found for id: {whatsapp_config.user_id}")
         return {"status": "ignored", "reason": "user_not_found"}
 
     message_data = {
@@ -199,7 +213,10 @@ def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
     result = process_whatsapp_message(message_data)
 
     response_text = result.get("response", "")
+    print(f"[WhatsApp] Response to send: {response_text}")
+    
     if response_text:
+        print(f"[WhatsApp] Sending reply to {message['from']}: {response_text}")
         send_result = send_whatsapp_message(
             phone_number_id=whatsapp_config.phone_number_id,
             access_token=whatsapp_config.access_token,
