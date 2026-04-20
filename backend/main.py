@@ -14,6 +14,7 @@ from routes import (
     google_calendar,
     gmail,
     emails,
+    whatsapp,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
@@ -60,6 +61,8 @@ def ensure_user_columns() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN gmail_watch_expiration TIMESTAMP"))
         if "gmail_watch_history_id" not in columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN gmail_watch_history_id TEXT"))
+        if "agent_phone_number" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN agent_phone_number TEXT"))
 
 ensure_activity_columns()
 ensure_user_columns()
@@ -83,6 +86,7 @@ app.include_router(
 app.include_router(
     emails.router, prefix="/api/emails", tags=["emails"]
 )
+app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["whatsapp"])
 
 
 @app.get("/")

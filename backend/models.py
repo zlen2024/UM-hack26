@@ -36,6 +36,9 @@ class User(Base):
     calendar_access_token = Column(String, nullable=True)
     calendar_refresh_token = Column(String, nullable=True)
 
+    # WhatsApp Business API fields
+    agent_phone_number = Column(String, nullable=True, index=True)
+
     contacts = relationship(
         "Contact", back_populates="owner", foreign_keys="Contact.user_id"
     )
