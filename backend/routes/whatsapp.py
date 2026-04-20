@@ -9,6 +9,14 @@ import requests
 router = APIRouter()
 
 
+class WhatsAppConfigSchema(BaseModel):
+    phone_number_id: str
+    display_phone_number: str
+    access_token: str
+    verify_token: str
+    user_id: int
+
+
 class WhatsAppWebhookPayload(BaseModel):
     object: str
     entry: List[Dict[str, Any]]
@@ -206,35 +214,31 @@ def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
 
 @router.post("/config")
 def create_whatsapp_config(
-    phone_number_id: str,
-    display_phone_number: str,
-    access_token: str,
-    verify_token: str,
-    user_id: int,
+    config: WhatsAppConfigSchema,
     db: Session = Depends(get_db)
 ):
     """Create or update WhatsApp phone number configuration"""
     existing = db.query(WhatsAppPhoneNumber).filter(
-        WhatsAppPhoneNumber.phone_number_id == phone_number_id
+        WhatsAppPhoneNumber.phone_number_id == config.phone_number_id
     ).first()
     
     if existing:
-        existing.display_phone_number = display_phone_number
-        existing.access_token = access_token
-        existing.verify_token = verify_token
-        existing.user_id = user_id
+        existing.display_phone_number = config.display_phone_number
+        existing.access_token = config.access_token
+        existing.verify_token = config.verify_token
+        existing.user_id = config.user_id
     else:
-        config = WhatsAppPhoneNumber(
-            phone_number_id=phone_number_id,
-            display_phone_number=display_phone_number,
-            access_token=access_token,
-            verify_token=verify_token,
-            user_id=user_id
+        whatsapp_config = WhatsAppPhoneNumber(
+            phone_number_id=config.phone_number_id,
+            display_phone_number=config.display_phone_number,
+            access_token=config.access_token,
+            verify_token=config.verify_token,
+            user_id=config.user_id
         )
-        db.add(config)
+        db.add(whatsapp_config)
     
     db.commit()
-    return {"status": "created", "phone_number_id": phone_number_id}
+    return {"status": "created", "phone_number_id": config.phone_number_id}
 
 
 @router.get("/config/{phone_number_id}")
