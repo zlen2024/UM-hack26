@@ -163,6 +163,7 @@ class WhatsAppPhoneNumber(Base):
     phone_number_id = Column(String, primary_key=True)
     display_phone_number = Column(String, unique=True, index=True)
     access_token = Column(String, nullable=False)
+    app_secret = Column(String, nullable=True)  # Meta App Secret for HMAC-SHA256 webhook validation
     verify_token = Column(String, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)

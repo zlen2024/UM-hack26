@@ -137,6 +137,7 @@ export const whatsapp = {
     phone_number_id: string;
     display_phone_number: string;
     access_token: string;
+    app_secret?: string;
     verify_token: string;
     user_id: number;
   }) => api.post('/whatsapp/config', data),

@@ -76,6 +76,7 @@ def ensure_whatsapp_table() -> None:
                     phone_number_id VARCHAR PRIMARY KEY,
                     display_phone_number VARCHAR UNIQUE,
                     access_token VARCHAR NOT NULL,
+                    app_secret VARCHAR,
                     verify_token VARCHAR NOT NULL,
                     user_id INTEGER NOT NULL REFERENCES users(id),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -84,6 +85,15 @@ def ensure_whatsapp_table() -> None:
             """))
             conn.execute(text("CREATE INDEX idx_whatsapp_user_id ON whatsapp_phone_numbers(user_id)"))
             conn.execute(text("CREATE INDEX idx_whatsapp_display_phone ON whatsapp_phone_numbers(display_phone_number)"))
+        else:
+            # Ensure app_secret column exists on existing tables
+            cols = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'whatsapp_phone_numbers'"
+            )).fetchall()
+            col_names = {row[0] for row in cols}
+            if "app_secret" not in col_names:
+                conn.execute(text("ALTER TABLE whatsapp_phone_numbers ADD COLUMN app_secret VARCHAR"))
 
 ensure_activity_columns()
 ensure_user_columns()

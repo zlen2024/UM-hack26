@@ -219,6 +219,7 @@ export default function SettingsPage() {
           phone_number_id: fields.phone_number_id,
           display_phone_number: fields.display_phone_number,
           access_token: fields.access_token,
+          app_secret: fields.app_secret || undefined,
           verify_token: fields.verify_token,
           user_id: user.id,
         });
@@ -229,6 +230,7 @@ export default function SettingsPage() {
           phone_number_id: fields.phone_number_id,
           display_phone_number: fields.display_phone_number,
           user_id: user.id,
+          has_app_secret: Boolean(fields.app_secret),
         });
       } else {
         localStorage.setItem(`integration_${key}`, 'on');
@@ -570,6 +572,19 @@ function IntegrationModal({ type, onClose, onSave, fields, setFields }: {
                 onChange={e => setFields({ ...fields, verify_token: e.target.value })}
                 required
               />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">App Secret <span className="text-xs text-muted font-normal">(optional — for webhook signature validation)</span></label>
+              <input
+                className="input-field"
+                type="password"
+                placeholder="your_meta_app_secret"
+                value={fields.app_secret || ''}
+                onChange={e => setFields({ ...fields, app_secret: e.target.value })}
+              />
+              <p className="text-xs text-muted mt-1">
+                Found in your Meta App Dashboard → Settings → Basic → App Secret. Enables HMAC-SHA256 webhook validation.
+              </p>
             </div>
             <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
               <label className="block text-sm font-semibold text-ink mb-2">Webhook URL</label>

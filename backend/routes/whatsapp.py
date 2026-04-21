@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse, JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from database import get_db
 from models import User, WhatsAppPhoneNumber
 import requests
+import hashlib
+import hmac
+import json
 
 router = APIRouter()
 
@@ -14,6 +17,7 @@ class WhatsAppConfigSchema(BaseModel):
     phone_number_id: str
     display_phone_number: str
     access_token: str
+    app_secret: Optional[str] = None
     verify_token: str
     user_id: int
 
@@ -54,6 +58,30 @@ class WhatsAppChange(BaseModel):
 class WhatsAppEntry(BaseModel):
     id: str
     changes: List[WhatsAppChange]
+
+
+def validate_webhook_signature(raw_body: bytes, signature_header: str, app_secret: str) -> bool:
+    """
+    Validate the X-Hub-Signature-256 header from Meta's webhook POST request.
+    
+    Generates an HMAC-SHA256 hash using the raw JSON payload as the message
+    and the app secret as the key, then compares it to the provided signature
+    using hmac.compare_digest to prevent timing attacks.
+    
+    Returns True if the signature is valid, False otherwise.
+    """
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+
+    expected_hash = hmac.new(
+        key=app_secret.encode("utf-8"),
+        msg=raw_body,
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    received_hash = signature_header[len("sha256="):]
+
+    return hmac.compare_digest(expected_hash, received_hash)
 
 
 def extract_message_data(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -171,15 +199,76 @@ def verify_webhook(
 
 
 @router.post("/webhook")
-def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
-    """Handle incoming WhatsApp messages from Meta"""
-    print(f"[WhatsApp] Received webhook payload: {payload}")
+async def receive_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Handle incoming WhatsApp webhook POST from Meta.
     
+    Per Meta's spec:
+    - Validates the X-Hub-Signature-256 HMAC-SHA256 signature against the raw body
+    - Returns HTTP 200 if the payload is valid
+    - Returns HTTP 400 if the signature is invalid or missing
+    """
+    # Read the raw body bytes (needed for HMAC signature validation)
+    raw_body = await request.body()
+
+    # Parse JSON from raw bytes
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        print("[WhatsApp] Invalid JSON in webhook payload")
+        return JSONResponse(status_code=400, content={"status": "error", "reason": "invalid_json"})
+
+    print(f"[WhatsApp] Received webhook payload: {payload}")
+
+    # --- HMAC-SHA256 Signature Validation ---
+    # Extract the display_phone_number early to look up the app_secret
     extracted = extract_message_data(payload)
+    
+    signature_header = request.headers.get("X-Hub-Signature-256", "")
+    
+    if signature_header:
+        # We need to find the app_secret to validate against.
+        # Try to find it from the payload's metadata phone number first,
+        # then fall back to checking all configs with an app_secret.
+        app_secret = None
+
+        if extracted:
+            config = find_whatsapp_config(db, extracted["display_phone_number"])
+            if config and config.app_secret:
+                app_secret = config.app_secret
+
+        if not app_secret:
+            # Fallback: try all configs that have an app_secret
+            configs_with_secret = db.query(WhatsAppPhoneNumber).filter(
+                WhatsAppPhoneNumber.app_secret.isnot(None)
+            ).all()
+            for cfg in configs_with_secret:
+                if validate_webhook_signature(raw_body, signature_header, cfg.app_secret):
+                    app_secret = cfg.app_secret
+                    break
+
+        if app_secret:
+            if not validate_webhook_signature(raw_body, signature_header, app_secret):
+                print("[WhatsApp] Webhook signature validation FAILED — rejecting payload")
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "error", "reason": "invalid_signature"},
+                )
+            print("[WhatsApp] Webhook signature validated successfully")
+        else:
+            # No app_secret configured — log a warning but still process
+            # (allows onboarding before the secret is set)
+            print("[WhatsApp] WARNING: No app_secret configured — skipping signature validation. "
+                  "Set app_secret on your WhatsApp config for security.")
+    else:
+        print("[WhatsApp] WARNING: No X-Hub-Signature-256 header present in request")
+
+    # --- Process the payload ---
     print(f"[WhatsApp] Extracted data: {extracted}")
 
     if not extracted:
-        return {"status": "ignored", "reason": "no_valid_message"}
+        # Meta may send status updates, errors, etc. — acknowledge them with 200
+        return JSONResponse(status_code=200, content={"status": "ok", "reason": "no_message_to_process"})
 
     display_phone = extracted["display_phone_number"]
     contact = extracted["contact"]
@@ -191,7 +280,7 @@ def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
     
     if not whatsapp_config:
         print(f"[WhatsApp] Config not found for display_phone: {display_phone}")
-        return {"status": "ignored", "reason": "whatsapp_config_not_found"}
+        return JSONResponse(status_code=200, content={"status": "ok", "reason": "config_not_found"})
 
     user = db.query(User).filter(User.id == whatsapp_config.user_id).first()
     print(f"[WhatsApp] Looking for user with id: {whatsapp_config.user_id}")
@@ -199,7 +288,7 @@ def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
     
     if not user:
         print(f"[WhatsApp] User not found for id: {whatsapp_config.user_id}")
-        return {"status": "ignored", "reason": "user_not_found"}
+        return JSONResponse(status_code=200, content={"status": "ok", "reason": "user_not_found"})
 
     message_data = {
         "user_id": user.id,
@@ -225,7 +314,8 @@ def receive_webhook(payload: Dict[str, Any], db: Session = Depends(get_db)):
         )
         result["sent"] = send_result
 
-    return {"status": "processed", "result": result}
+    # Meta requires HTTP 200 for successfully processed webhooks
+    return JSONResponse(status_code=200, content={"status": "processed", "result": result})
 
 
 @router.post("/config")
@@ -241,6 +331,7 @@ def create_whatsapp_config(
     if existing:
         existing.display_phone_number = config.display_phone_number
         existing.access_token = config.access_token
+        existing.app_secret = config.app_secret
         existing.verify_token = config.verify_token
         existing.user_id = config.user_id
     else:
@@ -248,6 +339,7 @@ def create_whatsapp_config(
             phone_number_id=config.phone_number_id,
             display_phone_number=config.display_phone_number,
             access_token=config.access_token,
+            app_secret=config.app_secret,
             verify_token=config.verify_token,
             user_id=config.user_id
         )
@@ -271,4 +363,5 @@ def get_whatsapp_config(phone_number_id: str, db: Session = Depends(get_db)):
         "phone_number_id": config.phone_number_id,
         "display_phone_number": config.display_phone_number,
         "user_id": config.user_id,
+        "has_app_secret": config.app_secret is not None,
     }
