@@ -37,10 +37,10 @@ class NeonizeManager:
             client = NewClient(session_file)
 
             # Define event handlers
-            @client.event(QREv)
-            def on_qr_code(client: NewClient, event: QREv):
+            @client.qr
+            def on_qr_code(client: NewClient, qr_data_bytes: bytes):
                 print(f"[Neonize] user_id {user_id}: QR Code generated")
-                qr_data = "".join(event.Codes) if hasattr(event, "Codes") and event.Codes else ""
+                qr_data = qr_data_bytes.decode() if isinstance(qr_data_bytes, bytes) else str(qr_data_bytes)
                 # Generate base64 PNG from QR string
                 qr = qrcode.QRCode(version=1, box_size=10, border=4)
                 qr.add_data(qr_data)
