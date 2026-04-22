@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from database import SessionLocal
 
 from neonize.client import NewClient
-from neonize.events import ConnectedEv, MessageEv, PairStatusEv, QRCodeEv
+from neonize.events import ConnectedEv, MessageEv, PairStatusEv, QREv
 
 from agents.cs_agent import process_whatsapp_message
 from models import NeonizeConfig
@@ -37,12 +37,13 @@ class NeonizeManager:
             client = NewClient(session_file)
 
             # Define event handlers
-            @client.event(QRCodeEv)
-            def on_qr_code(client: NewClient, event: QRCodeEv):
+            @client.event(QREv)
+            def on_qr_code(client: NewClient, event: QREv):
                 print(f"[Neonize] user_id {user_id}: QR Code generated")
+                qr_data = "".join(event.Codes) if hasattr(event, "Codes") and event.Codes else ""
                 # Generate base64 PNG from QR string
                 qr = qrcode.QRCode(version=1, box_size=10, border=4)
-                qr.add_data(event.QRCode)
+                qr.add_data(qr_data)
                 qr.make(fit=True)
                 img = qr.make_image(fill_color="black", back_color="white")
                 
