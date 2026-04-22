@@ -1,3 +1,4 @@
+import time
 import os
 import asyncio
 import base64
@@ -23,7 +24,10 @@ class NeonizeManager:
         self.client_factory = ClientFactory(self.session_file)
         self.qr_codes: Dict[int, str] = {}
 
+
         self.setup_factory_events()
+        self.connection_times: Dict[int, float] = {}
+
 
     def get_user_id_from_client(self, client: NewAClient) -> Optional[int]:
         try:
@@ -38,8 +42,11 @@ class NeonizeManager:
         @self.client_factory.event(ConnectedEv)
         async def on_connected(client: NewAClient, event: ConnectedEv):
             user_id = self.get_user_id_from_client(client)
+
             if user_id:
                 print(f"[Neonize] user_id {user_id}: Connected successfully!")
+                self.connection_times[user_id] = time.time()
+
                 if user_id in self.qr_codes:
                     del self.qr_codes[user_id]
                 
@@ -82,13 +89,30 @@ class NeonizeManager:
                 # print(f"[Neonize] message has no extractable text: {event}")
                 return
 
+
             sender_jid = event.Info.MessageSource.Sender.User
             chat_jid = event.Info.MessageSource.Chat
             sender_name = event.Info.Pushname or ""
 
-            # Ignore own messages or status broadcasts
-            if event.Info.MessageSource.IsFromMe or "@broadcast" in chat_jid:
+            # Only process new messages after successful connection
+            msg_timestamp = getattr(event.Info, 'Timestamp', time.time())
+            conn_time = self.connection_times.get(user_id, 0)
+            if msg_timestamp < conn_time:
+                # Ignore historical messages
                 return
+
+            # Check if chat_jid is broadcast
+            is_broadcast = False
+            if hasattr(chat_jid, "Server") and chat_jid.Server == "broadcast":
+                is_broadcast = True
+
+            # Ignore own messages or status broadcasts
+            if event.Info.MessageSource.IsFromMe or is_broadcast:
+                return
+
+            # Also check if user phone is passed nicely
+            sender_phone = f"{sender_jid}@{chat_jid.Server}" if hasattr(chat_jid, "Server") else sender_jid
+
 
             print(f"[Neonize] user_id {user_id} received message from {sender_jid}: {msg_content}")
 
@@ -97,7 +121,7 @@ class NeonizeManager:
                 message_data = {
                     "user_id": user_id,
                     "contact_name": sender_name,
-                    "phone": sender_jid,
+                    "phone": sender_phone,
                     "message": msg_content
                 }
 
@@ -106,7 +130,7 @@ class NeonizeManager:
                 response_text = result.get("response", "")
 
                 if response_text:
-                    await client.reply_message(response_text, event)
+                    await client.reply_message(response_text, event.Message, to=event.Info.MessageSource.Chat)
             except Exception as e:
                 print(f"[Neonize] Error processing message: {e}")
 
@@ -115,8 +139,12 @@ class NeonizeManager:
         print("[Neonize] Loading existing sessions...")
         try:
             for device in self.client_factory.get_all_devices():
-                self.client_factory.new_client(device.JID)
+                client = self.client_factory.new_client(device.JID)
+                user_id = self.get_user_id_from_client(client)
+                if user_id:
+                    self.connection_times[user_id] = time.time()
                 print(f"[Neonize] Loaded device JID: {device.JID}")
+
 
             # Connect all clients in background
             asyncio.create_task(self.client_factory.run())
@@ -135,6 +163,8 @@ class NeonizeManager:
 
         # We need to manually set a name property to identify it later in factory events
         client.name = device_name
+        self.connection_times[user_id] = time.time()
+
 
 
 
