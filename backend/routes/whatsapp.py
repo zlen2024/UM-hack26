@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from database import get_db
 from models import User, WhatsAppPhoneNumber
+from auth import get_current_user
 import requests
 import hashlib
 import hmac
@@ -372,16 +373,13 @@ def get_whatsapp_config(phone_number_id: str, db: Session = Depends(get_db)):
 # ==========================================
 
 @router.post("/neonize/connect")
-def neonize_connect(request: Request, db: Session = Depends(get_db)):
+def neonize_connect(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Start Neonize client for the current user"""
-    # Simple auth simulation - in a real app, use Depends(get_current_user)
-    # For now, we'll try to get user_id from the JSON payload or default to 1
     import json
     from neonize_client import manager
     
     try:
-        user_id = 1 # default
-        # If payload contains user_id, use it
+        user_id = current_user.id
         return {"status": "started", "user_id": user_id, "success": manager.start_client(user_id)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -412,11 +410,11 @@ def neonize_disconnect(user_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/neonize/send")
-async def neonize_send(request: Request, db: Session = Depends(get_db)):
+async def neonize_send(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Send a message via Neonize"""
     from neonize_client import manager
     data = await request.json()
-    user_id = data.get("user_id", 1)
+    user_id = current_user.id
     phone = data.get("phone")
     message = data.get("message")
     
