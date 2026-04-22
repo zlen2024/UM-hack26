@@ -54,15 +54,32 @@ class NeonizeManager:
                 except Exception as e:
                     print(f"Error updating DB on connect: {e}")
 
+        @self.client_factory.event(PairStatusEv)
+        async def on_pair_status(client: NewAClient, event: PairStatusEv):
+            user_id = self.get_user_id_from_client(client)
+            if user_id:
+                print(f"[Neonize] user_id {user_id}: Pair status {event}")
+                if hasattr(event, 'ID') and event.ID:
+                    # Successfully paired
+                    if user_id in self.qr_codes:
+                        del self.qr_codes[user_id]
+
         @self.client_factory.event(MessageEv)
         async def on_message(client: NewAClient, event: MessageEv):
             user_id = self.get_user_id_from_client(client)
             if not user_id:
                 return
 
-            msg_content = event.Message.conversation or (event.Message.extendedTextMessage.text if event.Message.extendedTextMessage else "")
+
+            msg_content = ""
+            if hasattr(event.Message, "conversation") and event.Message.conversation:
+                msg_content = event.Message.conversation
+            elif hasattr(event.Message, "extendedTextMessage") and event.Message.extendedTextMessage and event.Message.extendedTextMessage.text:
+                msg_content = event.Message.extendedTextMessage.text
+
 
             if not msg_content:
+                # print(f"[Neonize] message has no extractable text: {event}")
                 return
 
             sender_jid = event.Info.MessageSource.Sender.User
@@ -119,8 +136,10 @@ class NeonizeManager:
         # We need to manually set a name property to identify it later in factory events
         client.name = device_name
 
+
+
         @client.qr
-        async def on_qr_code(c: NewAClient, qr_data_bytes: bytes):
+        async def on_qr_code(c, qr_data_bytes):
             print(f"[Neonize] user_id {user_id}: QR Code generated")
             qr_data = qr_data_bytes.decode() if isinstance(qr_data_bytes, bytes) else str(qr_data_bytes)
             # Generate base64 PNG from QR string
@@ -128,12 +147,14 @@ class NeonizeManager:
             qr.add_data(qr_data)
             qr.make(fit=True)
             img = qr.make_image(fill_color="black", back_color="white")
-            
+
             buffered = io.BytesIO()
             img.save(buffered, format="PNG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
             self.qr_codes[user_id] = f"data:image/png;base64,{img_str}"
+
+
 
         # Connect this specific client
         asyncio.create_task(client.connect())
