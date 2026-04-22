@@ -5,7 +5,7 @@ ENV PYTHONUNBUFFERED=1
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Install Node.js
-RUN apt-get update && apt-get install -y curl && \
+RUN apt-get update && apt-get install -y curl libmagic1 && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
