@@ -97,6 +97,7 @@ def agent_node(state: AgentState) -> dict:
                     "name": t.name,
                     "description": t.description,
                     "parameters": t.args_schema.schema() if hasattr(t, "args_schema") else {"type": "object", "properties": {}}
+                }
             })
         except:
             tool_defs.append({
@@ -105,6 +106,7 @@ def agent_node(state: AgentState) -> dict:
                     "name": t.name,
                     "description": t.description,
                     "parameters": {"type": "object", "properties": {}}
+                }
             })
     
     try:
