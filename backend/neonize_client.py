@@ -172,6 +172,7 @@ class NeonizeManager:
         qr_code = self.qr_codes.get(user_id)
 
         is_connected = False
+
         if client:
             try:
                 is_connected = await client.is_connected
@@ -187,12 +188,18 @@ class NeonizeManager:
         except:
             pass
 
+        # Force clear QR if connected
+        if is_connected and user_id in self.qr_codes:
+            del self.qr_codes[user_id]
+            qr_code = None
+
         return {
             "started": client is not None,
             "connected": is_connected,
             "has_qr": qr_code is not None,
             "qr_code": qr_code
         }
+
 
     async def stop_client(self, user_id: int):
         device_name = f"user_{user_id}"
