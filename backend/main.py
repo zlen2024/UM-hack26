@@ -1,7 +1,9 @@
+import contextlib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from database import engine, Base
+from neonize_client import manager
 from routes import (
     auth,
     contacts,
@@ -18,7 +20,16 @@ from routes import (
     privacy,
 )
 
-app = FastAPI(title="UM CRM API", version="1.0.0")
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("[Lifespan] Starting Neonize auto-reconnect...")
+    await manager.start_all_clients()
+    yield
+    # Shutdown (if needed)
+    print("[Lifespan] Shutting down...")
+
+app = FastAPI(title="UM CRM API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

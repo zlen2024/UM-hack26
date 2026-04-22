@@ -373,14 +373,14 @@ def get_whatsapp_config(phone_number_id: str, db: Session = Depends(get_db)):
 # ==========================================
 
 @router.post("/neonize/connect")
-def neonize_connect(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def neonize_connect(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Start Neonize client for the current user"""
     import json
     from neonize_client import manager
     
     try:
         user_id = current_user.id
-        return {"status": "started", "user_id": user_id, "success": manager.start_client(user_id)}
+        return {"status": "started", "user_id": user_id, "success": await manager.start_client(user_id)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -402,10 +402,10 @@ def neonize_status(user_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/neonize/disconnect/{user_id}")
-def neonize_disconnect(user_id: int, db: Session = Depends(get_db)):
+async def neonize_disconnect(user_id: int, db: Session = Depends(get_db)):
     """Disconnect and clear session"""
     from neonize_client import manager
-    manager.disconnect_session(user_id)
+    await manager.disconnect_session(user_id)
     return {"status": "disconnected"}
 
 
@@ -421,5 +421,5 @@ async def neonize_send(request: Request, db: Session = Depends(get_db), current_
     if not phone or not message:
         raise HTTPException(status_code=400, detail="Missing phone or message")
         
-    success = manager.send_message(user_id, phone, message)
+    success = await manager.send_message(user_id, phone, message)
     return {"success": success}
