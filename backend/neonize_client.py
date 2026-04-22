@@ -120,7 +120,7 @@ class NeonizeManager:
         client.name = device_name
 
         @client.qr
-        def on_qr_code(c: NewAClient, qr_data_bytes: bytes):
+        async def on_qr_code(c: NewAClient, qr_data_bytes: bytes):
             print(f"[Neonize] user_id {user_id}: QR Code generated")
             qr_data = qr_data_bytes.decode() if isinstance(qr_data_bytes, bytes) else str(qr_data_bytes)
             # Generate base64 PNG from QR string
@@ -139,7 +139,7 @@ class NeonizeManager:
         asyncio.create_task(client.connect())
         return True
 
-    def get_status(self, user_id: int) -> Dict[str, Any]:
+    async def get_status(self, user_id: int) -> Dict[str, Any]:
         device_name = f"user_{user_id}"
 
         client = None
@@ -153,7 +153,7 @@ class NeonizeManager:
         is_connected = False
         if client:
             try:
-                is_connected = client.is_connected()
+                is_connected = await client.is_connected()
             except:
                 pass
 

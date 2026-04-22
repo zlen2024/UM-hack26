@@ -386,12 +386,12 @@ async def neonize_connect(request: Request, db: Session = Depends(get_db), curre
 
 
 @router.get("/neonize/status/{user_id}")
-def neonize_status(user_id: int, db: Session = Depends(get_db)):
+async def neonize_status(user_id: int, db: Session = Depends(get_db)):
     """Get connection and QR status"""
     from neonize_client import manager
     from models import NeonizeConfig
     
-    status = manager.get_status(user_id)
+    status = await manager.get_status(user_id)
     
     # Get config
     config = db.query(NeonizeConfig).filter(NeonizeConfig.user_id == user_id).first()
