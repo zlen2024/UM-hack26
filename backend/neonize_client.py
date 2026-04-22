@@ -179,19 +179,22 @@ class NeonizeManager:
             except:
                 pass
 
-        try:
-            db = SessionLocal()
-            config = db.query(NeonizeConfig).filter(NeonizeConfig.user_id == user_id).first()
-            if config:
-                is_connected = is_connected or config.is_connected
-            db.close()
-        except:
-            pass
+        if qr_code is not None:
+            is_connected = False
+        else:
+            try:
+                db = SessionLocal()
+                config = db.query(NeonizeConfig).filter(NeonizeConfig.user_id == user_id).first()
+                if config:
+                    is_connected = is_connected or config.is_connected
+                db.close()
+            except:
+                pass
 
-        # Force clear QR if connected
-        if is_connected and user_id in self.qr_codes:
-            del self.qr_codes[user_id]
-            qr_code = None
+            # Force clear QR if connected
+            if is_connected and user_id in self.qr_codes:
+                del self.qr_codes[user_id]
+                qr_code = None
 
         return {
             "started": client is not None,
@@ -199,7 +202,6 @@ class NeonizeManager:
             "has_qr": qr_code is not None,
             "qr_code": qr_code
         }
-
 
     async def stop_client(self, user_id: int):
         device_name = f"user_{user_id}"
