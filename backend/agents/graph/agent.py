@@ -46,10 +46,9 @@ def build_graph():
     workflow.add_conditional_edges(
         "agent",
         should_use_tools,
-        {"tools": "tools", "respond": "respond"}
+        {"tools": "tools", "respond": END}
     )
     workflow.add_edge("tools", "agent")
-    workflow.add_edge("respond", END)
     
     return workflow.compile()
 
