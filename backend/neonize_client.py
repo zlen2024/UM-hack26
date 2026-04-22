@@ -153,7 +153,7 @@ class NeonizeManager:
         is_connected = False
         if client:
             try:
-                is_connected = await client.is_connected()
+                is_connected = await client.is_connected
             except:
                 pass
 
