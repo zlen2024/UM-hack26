@@ -22,23 +22,32 @@ def run_migrations():
     db = SessionLocal()
     try:
         # Check if calendar_access_token column exists
-        result = db.execute(text("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = 'users' AND column_name = 'calendar_access_token'
-        """))
-        if not result.fetchone():
-            db.execute(text("ALTER TABLE users ADD COLUMN calendar_access_token VARCHAR"))
-            print("[Migration] Added calendar_access_token column")
-        
-        result = db.execute(text("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = 'users' AND column_name = 'calendar_refresh_token'
-        """))
-        if not result.fetchone():
-            db.execute(text("ALTER TABLE users ADD COLUMN calendar_refresh_token VARCHAR"))
-            print("[Migration] Added calendar_refresh_token column")
+        if "sqlite" in DATABASE_URL:
+            result = db.execute(text("PRAGMA table_info(users)"))
+            columns = [row[1] for row in result.fetchall()]
+            if 'calendar_access_token' not in columns:
+                db.execute(text("ALTER TABLE users ADD COLUMN calendar_access_token VARCHAR"))
+            if 'calendar_refresh_token' not in columns:
+                db.execute(text("ALTER TABLE users ADD COLUMN calendar_refresh_token VARCHAR"))
+        else:
+            result = db.execute(text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'users' AND column_name = 'calendar_access_token'
+            """))
+            if not result.fetchone():
+                db.execute(text("ALTER TABLE users ADD COLUMN calendar_access_token VARCHAR"))
+                print("[Migration] Added calendar_access_token column")
+
+            result = db.execute(text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'users' AND column_name = 'calendar_refresh_token'
+            """))
+            if not result.fetchone():
+                db.execute(text("ALTER TABLE users ADD COLUMN calendar_refresh_token VARCHAR"))
+                print("[Migration] Added calendar_refresh_token column")
+
         
         db.commit()
         print("[Migration] Database migrations complete")

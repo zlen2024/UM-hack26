@@ -43,22 +43,34 @@ Base.metadata.create_all(bind=engine)
 
 
 def ensure_activity_columns() -> None:
+    from database import DATABASE_URL
     with engine.begin() as conn:
-        result = conn.execute(text(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'activities'"
-        )).fetchall()
-        columns = {row[0] for row in result}
+        if "sqlite" in DATABASE_URL:
+            result = conn.execute(text("PRAGMA table_info(activities)")).fetchall()
+            columns = {row[1] for row in result}
+        else:
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'activities'"
+            )).fetchall()
+            columns = {row[0] for row in result}
+
         if "source" not in columns:
             conn.execute(text("ALTER TABLE activities ADD COLUMN source TEXT"))
         if "external_id" not in columns:
             conn.execute(text("ALTER TABLE activities ADD COLUMN external_id TEXT"))
 
 def ensure_user_columns() -> None:
+    from database import DATABASE_URL
     with engine.begin() as conn:
-        result = conn.execute(text(
-            "SELECT column_name FROM information_schema.columns WHERE table_name = 'users'"
-        )).fetchall()
-        columns = {row[0] for row in result}
+        if "sqlite" in DATABASE_URL:
+            result = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+            columns = {row[1] for row in result}
+        else:
+            result = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'users'"
+            )).fetchall()
+            columns = {row[0] for row in result}
+
         if "google_email" not in columns:
             conn.execute(text("ALTER TABLE users ADD COLUMN google_email TEXT"))
         if "google_access_token" not in columns:
@@ -77,10 +89,15 @@ def ensure_user_columns() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN agent_phone_number TEXT"))
 
 def ensure_whatsapp_table() -> None:
+    from database import DATABASE_URL
     with engine.begin() as conn:
-        result = conn.execute(text(
-            "SELECT table_name FROM information_schema.tables WHERE table_name = 'whatsapp_phone_numbers'"
-        )).fetchone()
+        if "sqlite" in DATABASE_URL:
+            result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='whatsapp_phone_numbers'")).fetchone()
+        else:
+            result = conn.execute(text(
+                "SELECT table_name FROM information_schema.tables WHERE table_name = 'whatsapp_phone_numbers'"
+            )).fetchone()
+
         if not result:
             conn.execute(text("""
                 CREATE TABLE whatsapp_phone_numbers (
@@ -98,23 +115,33 @@ def ensure_whatsapp_table() -> None:
             conn.execute(text("CREATE INDEX idx_whatsapp_display_phone ON whatsapp_phone_numbers(display_phone_number)"))
         else:
             # Ensure app_secret column exists on existing tables
-            cols = conn.execute(text(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'whatsapp_phone_numbers'"
-            )).fetchall()
-            col_names = {row[0] for row in cols}
+            if "sqlite" in DATABASE_URL:
+                cols = conn.execute(text("PRAGMA table_info(whatsapp_phone_numbers)")).fetchall()
+                col_names = {row[1] for row in cols}
+            else:
+                cols = conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'whatsapp_phone_numbers'"
+                )).fetchall()
+                col_names = {row[0] for row in cols}
             if "app_secret" not in col_names:
                 conn.execute(text("ALTER TABLE whatsapp_phone_numbers ADD COLUMN app_secret VARCHAR"))
 
 def ensure_neonize_table() -> None:
+    from database import DATABASE_URL
     with engine.begin() as conn:
-        result = conn.execute(text(
-            "SELECT table_name FROM information_schema.tables WHERE table_name = 'neonize_config'"
-        )).fetchone()
+        if "sqlite" in DATABASE_URL:
+            result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='neonize_config'")).fetchone()
+        else:
+            result = conn.execute(text(
+                "SELECT table_name FROM information_schema.tables WHERE table_name = 'neonize_config'"
+            )).fetchone()
+
         if not result:
-            conn.execute(text("""
+            id_col = "id INTEGER PRIMARY KEY AUTOINCREMENT" if "sqlite" in DATABASE_URL else "id SERIAL PRIMARY KEY"
+            conn.execute(text(f"""
                 CREATE TABLE neonize_config (
-                    id SERIAL PRIMARY KEY,
+                    {id_col},
                     user_id INTEGER NOT NULL REFERENCES users(id),
                     session_name VARCHAR DEFAULT 'default',
                     phone_number VARCHAR,
