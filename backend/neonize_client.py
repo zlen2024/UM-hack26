@@ -114,7 +114,7 @@ class NeonizeManager:
             if getattr(c, 'name', '') == device_name or getattr(c, 'device_name', '') == device_name:
                 return True
 
-        client = self.client_factory.new_client(device_name)
+        client = self.client_factory.new_client(uuid=device_name)
 
         # We need to manually set a name property to identify it later in factory events
         client.name = device_name
