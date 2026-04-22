@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { googleCalendar, whatsapp } from '@/lib/api';
+import { googleCalendar, whatsapp, telegram } from '@/lib/api';
 import { User, Mail, Calendar, CheckCircle2, XCircle, Zap, Cloud, ShieldCheck, MessageSquare } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -25,6 +25,7 @@ export default function SettingsPage() {
     cloud: false,
     sso: false,
     whatsapp: false,
+    telegram: false,
   });
   const [activeIntegration, setActiveIntegration] = useState<null | string>(null);
   const [integrationFields, setIntegrationFields] = useState<any>({});
@@ -51,6 +52,7 @@ export default function SettingsPage() {
         cloud: localStorage.getItem('integration_cloud') === 'on',
         sso: localStorage.getItem('integration_sso') === 'on',
         whatsapp: localStorage.getItem('integration_whatsapp') === 'on',
+        telegram: localStorage.getItem('integration_telegram') === 'on',
       };
       if (isMounted) {
         setIntegrationStatus(baseStatus);
@@ -99,6 +101,23 @@ export default function SettingsPage() {
       }
     };
     checkWhatsAppStatus();
+
+    const checkTelegramStatus = async () => {
+      const storedBotToken = localStorage.getItem('telegram_bot_token');
+      if (storedBotToken) {
+        try {
+          const response = await telegram.getConfig(storedBotToken);
+          if (response.data) {
+            localStorage.setItem('integration_telegram', 'on');
+            setIntegrationStatus((prev) => ({ ...prev, telegram: true }));
+          }
+        } catch (error) {
+          localStorage.removeItem('telegram_bot_token');
+          localStorage.setItem('integration_telegram', 'off');
+        }
+      }
+    };
+    checkTelegramStatus();
 
     return () => {
       isMounted = false;
@@ -167,6 +186,8 @@ export default function SettingsPage() {
         await googleCalendar.clearCredentials();
       } else if (key === 'whatsapp') {
         localStorage.removeItem('whatsapp_phone_number_id');
+      } else if (key === 'telegram') {
+        localStorage.removeItem('telegram_bot_token');
       }
       localStorage.setItem(`integration_${key}`, 'off');
       setIntegrationStatus((prev) => ({ ...prev, [key]: false }));
@@ -232,6 +253,22 @@ export default function SettingsPage() {
           user_id: user.id,
           has_app_secret: Boolean(fields.app_secret),
         });
+      } else if (key === 'telegram') {
+        const userData = localStorage.getItem('user');
+        const user = userData ? JSON.parse(userData) : null;
+        if (!user?.id) {
+          window.alert('User not found. Please login again.');
+          return;
+        }
+        const webhookUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/api/telegram/webhook/${fields.bot_token}`;
+        await telegram.createConfig({
+          bot_token: fields.bot_token,
+          user_id: user.id,
+          webhook_url: webhookUrl,
+        });
+        localStorage.setItem('telegram_bot_token', fields.bot_token);
+        localStorage.setItem(`integration_${key}`, 'on');
+        setIntegrationStatus((prev) => ({ ...prev, [key]: true }));
       } else {
         localStorage.setItem(`integration_${key}`, 'on');
         setIntegrationStatus((prev) => ({ ...prev, [key]: true }));
@@ -388,6 +425,16 @@ export default function SettingsPage() {
                   onConnect={() => handleConnect('whatsapp')}
                   onDisconnect={() => handleDisconnect('whatsapp')}
                 />
+
+                <IntegrationBox
+                  icon={<MessageSquare size={22} className="text-blue-500" />}
+                  name="Telegram Bot"
+                  desc="Receive and reply to Telegram messages."
+                  status={integrationStatus.telegram ? 'on' : 'off'}
+                  onConnect={() => handleConnect('telegram')}
+                  onDisconnect={() => handleDisconnect('telegram')}
+                />
+
               </div>
               {activeIntegration && (
                 <IntegrationModal
@@ -514,6 +561,44 @@ function IntegrationModal({ type, onClose, onSave, fields, setFields }: {
     fieldKey = 'providerId';
   }
 
+
+  if (type === 'telegram') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+        <div className="modal-panel w-full max-w-lg p-6 relative animate-fade-up max-h-[90vh] overflow-y-auto">
+          <button className="absolute top-3 right-3 text-muted" onClick={onClose}>&times;</button>
+          <h3 className="text-lg font-semibold text-ink mb-2">Configure Telegram Bot</h3>
+          <p className="text-sm text-muted mb-4">Enter your Telegram Bot Token below.</p>
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              onSave(type, fields);
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Bot Token</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="123456789:ABCdefGHI..."
+                value={fields.bot_token || ''}
+                onChange={e => setFields({ ...fields, bot_token: e.target.value })}
+                required
+              />
+              <p className="text-xs text-muted mt-1">
+                You can get a bot token by talking to BotFather on Telegram.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn-primary">Connect Bot</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
   if (type === 'whatsapp') {
     const webhookUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/api/whatsapp/webhook`;
     return (

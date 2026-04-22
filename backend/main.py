@@ -16,6 +16,7 @@ from routes import (
     emails,
     whatsapp,
     privacy,
+    telegram,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
@@ -95,9 +96,28 @@ def ensure_whatsapp_table() -> None:
             if "app_secret" not in col_names:
                 conn.execute(text("ALTER TABLE whatsapp_phone_numbers ADD COLUMN app_secret VARCHAR"))
 
+
+def ensure_telegram_table() -> None:
+    with engine.begin() as conn:
+        result = conn.execute(text(
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'telegram_bots'"
+        )).fetchone()
+        if not result:
+            conn.execute(text("""
+                CREATE TABLE telegram_bots (
+                    bot_token VARCHAR PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    username VARCHAR,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX idx_telegram_user_id ON telegram_bots(user_id)"))
+
 ensure_activity_columns()
 ensure_user_columns()
 ensure_whatsapp_table()
+ensure_telegram_table()
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
@@ -119,6 +139,7 @@ app.include_router(
     emails.router, prefix="/api/emails", tags=["emails"]
 )
 app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["whatsapp"])
+app.include_router(telegram.router, prefix="/api/telegram", tags=["telegram"])
 app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
 
 

@@ -40,6 +40,7 @@ class User(Base):
     agent_phone_number = Column(String, nullable=True, index=True)
 
     whatsapp_numbers = relationship("WhatsAppPhoneNumber", back_populates="user")
+    telegram_bots = relationship("TelegramBot", back_populates="user")
 
     contacts = relationship(
         "Contact", back_populates="owner", foreign_keys="Contact.user_id"
@@ -184,3 +185,14 @@ class AgentSession(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User")
+
+class TelegramBot(Base):
+    __tablename__ = "telegram_bots"
+
+    bot_token = Column(String, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    username = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="telegram_bots")
