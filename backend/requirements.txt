@@ -18,3 +18,5 @@ openai>=1.0.0
 langgraph
 langchain-openai
 requests
+neonize==1.0.8
+qrcode[pil]

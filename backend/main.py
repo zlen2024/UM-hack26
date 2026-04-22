@@ -95,9 +95,30 @@ def ensure_whatsapp_table() -> None:
             if "app_secret" not in col_names:
                 conn.execute(text("ALTER TABLE whatsapp_phone_numbers ADD COLUMN app_secret VARCHAR"))
 
+def ensure_neonize_table() -> None:
+    with engine.begin() as conn:
+        result = conn.execute(text(
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'neonize_config'"
+        )).fetchone()
+        if not result:
+            conn.execute(text("""
+                CREATE TABLE neonize_config (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id),
+                    session_name VARCHAR DEFAULT 'default',
+                    phone_number VARCHAR,
+                    is_connected BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX idx_neonize_user_id ON neonize_config(user_id)"))
+
 ensure_activity_columns()
 ensure_user_columns()
 ensure_whatsapp_table()
+ensure_neonize_table()
+
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])

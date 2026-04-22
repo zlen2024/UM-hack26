@@ -29,6 +29,16 @@ export default function SettingsPage() {
   const [activeIntegration, setActiveIntegration] = useState<null | string>(null);
   const [integrationFields, setIntegrationFields] = useState<any>({});
   const [whatsappConfig, setWhatsappConfig] = useState<any>(null);
+  
+  // Neonize State
+  const [neonizeStatus, setNeonizeStatus] = useState<any>({
+    started: false,
+    connected: false,
+    has_qr: false,
+    qr_code: null,
+    phone_number: null
+  });
+  const [showNeonizeModal, setShowNeonizeModal] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -99,11 +109,45 @@ export default function SettingsPage() {
       }
     };
     checkWhatsAppStatus();
+    
+    // Check Neonize Status
+    const checkNeonizeStatus = async () => {
+      const userData = localStorage.getItem('user');
+      if (userData) {
+        const user = JSON.parse(userData);
+        try {
+          const res = await whatsapp.neonizeStatus(user.id);
+          setNeonizeStatus(res.data);
+        } catch(e) {
+          console.error("Neonize status error", e);
+        }
+      }
+    };
+    checkNeonizeStatus();
 
     return () => {
       isMounted = false;
     };
   }, [router]);
+
+  // Polling for QR Code when modal is open
+  useEffect(() => {
+    let interval: any;
+    if (showNeonizeModal && !neonizeStatus.connected) {
+      interval = setInterval(async () => {
+        if (user?.id) {
+          try {
+            const res = await whatsapp.neonizeStatus(user.id);
+            setNeonizeStatus(res.data);
+            if (res.data.connected) {
+              setShowNeonizeModal(false);
+            }
+          } catch(e) {}
+        }
+      }, 3000);
+    }
+    return () => clearInterval(interval);
+  }, [showNeonizeModal, neonizeStatus.connected, user]);
 
 
   const handleConfigureEmail = async () => {
@@ -167,12 +211,29 @@ export default function SettingsPage() {
         await googleCalendar.clearCredentials();
       } else if (key === 'whatsapp') {
         localStorage.removeItem('whatsapp_phone_number_id');
+      } else if (key === 'neonize') {
+        if (user?.id) {
+           await whatsapp.neonizeDisconnect(user.id);
+           setNeonizeStatus({ started: false, connected: false, has_qr: false, qr_code: null, phone_number: null });
+        }
+        return;
       }
       localStorage.setItem(`integration_${key}`, 'off');
       setIntegrationStatus((prev) => ({ ...prev, [key]: false }));
       setActiveIntegration(null);
     } catch (error) {
       console.error('Failed to disconnect integration', error);
+    }
+  };
+
+  const handleConnectNeonize = async () => {
+    if (!user?.id) return;
+    try {
+      await whatsapp.neonizeConnect();
+      setShowNeonizeModal(true);
+    } catch (e) {
+      console.error('Failed to connect Neonize', e);
+      alert('Failed to start WhatsApp connection');
     }
   };
 
@@ -373,12 +434,12 @@ export default function SettingsPage() {
                   onDisconnect={() => handleDisconnect('cloud')}
                 />
                 <IntegrationBox
-                  icon={<ShieldCheck size={22} className="text-green-600" />}
-                  name="SSO / Security"
-                  desc="Enable single sign-on and security features."
-                  status={integrationStatus.sso ? 'on' : 'off'}
-                  onConnect={() => handleConnect('sso')}
-                  onDisconnect={() => handleDisconnect('sso')}
+                  icon={<MessageSquare size={22} className="text-green-600" />}
+                  name="WhatsApp (QR Scan)"
+                  desc="Connect via Neonize by scanning a QR code."
+                  status={neonizeStatus.connected ? 'on' : 'off'}
+                  onConnect={handleConnectNeonize}
+                  onDisconnect={() => handleDisconnect('neonize')}
                 />
                 <IntegrationBox
                   icon={<MessageSquare size={22} className="text-green-500" />}
@@ -434,6 +495,38 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+      
+      {showNeonizeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+          <div className="modal-panel w-full max-w-sm p-6 relative animate-fade-up text-center bg-white rounded-2xl shadow-xl">
+            <button className="absolute top-3 right-3 text-muted hover:text-ink transition-colors" onClick={() => setShowNeonizeModal(false)}>
+              <XCircle size={24} />
+            </button>
+            <h3 className="text-xl font-bold text-ink mb-2 flex items-center justify-center gap-2">
+              <MessageSquare className="text-green-500" /> WhatsApp Pairing
+            </h3>
+            <p className="text-sm text-muted mb-6">Open WhatsApp on your phone, go to Linked Devices, and scan this QR code.</p>
+            
+            <div className="flex flex-col items-center justify-center min-h-[250px] bg-wash rounded-xl p-4 border border-slate-200">
+              {neonizeStatus.has_qr && neonizeStatus.qr_code ? (
+                <img src={neonizeStatus.qr_code} alt="WhatsApp QR Code" className="w-48 h-48 rounded-lg shadow-sm" />
+              ) : neonizeStatus.connected ? (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                    <CheckCircle2 size={32} className="text-green-600" />
+                  </div>
+                  <p className="text-green-600 font-semibold">Successfully Connected!</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+                  <p className="text-sm text-muted">Generating QR code...</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -142,4 +142,11 @@ export const whatsapp = {
     user_id: number;
   }) => api.post('/whatsapp/config', data),
   status: () => api.get('/whatsapp/status'),
+  
+  // Neonize Web Protocol Methods
+  neonizeConnect: () => api.post('/whatsapp/neonize/connect', {}),
+  neonizeStatus: (userId: number) => api.get(`/whatsapp/neonize/status/${userId}`),
+  neonizeDisconnect: (userId: number) => api.post(`/whatsapp/neonize/disconnect/${userId}`, {}),
+  neonizeSend: (userId: number, phone: string, message: string) => 
+    api.post('/whatsapp/neonize/send', { user_id: userId, phone, message }),
 };

@@ -365,3 +365,63 @@ def get_whatsapp_config(phone_number_id: str, db: Session = Depends(get_db)):
         "user_id": config.user_id,
         "has_app_secret": config.app_secret is not None,
     }
+
+
+# ==========================================
+# NEONIZE WHATSAPP WEB PROTOCOL INTEGRATION
+# ==========================================
+
+@router.post("/neonize/connect")
+def neonize_connect(request: Request, db: Session = Depends(get_db)):
+    """Start Neonize client for the current user"""
+    # Simple auth simulation - in a real app, use Depends(get_current_user)
+    # For now, we'll try to get user_id from the JSON payload or default to 1
+    import json
+    from neonize_client import manager
+    
+    try:
+        user_id = 1 # default
+        # If payload contains user_id, use it
+        return {"status": "started", "user_id": user_id, "success": manager.start_client(user_id)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/neonize/status/{user_id}")
+def neonize_status(user_id: int, db: Session = Depends(get_db)):
+    """Get connection and QR status"""
+    from neonize_client import manager
+    from models import NeonizeConfig
+    
+    status = manager.get_status(user_id)
+    
+    # Get config
+    config = db.query(NeonizeConfig).filter(NeonizeConfig.user_id == user_id).first()
+    if config and config.phone_number:
+        status["phone_number"] = config.phone_number
+        
+    return status
+
+
+@router.post("/neonize/disconnect/{user_id}")
+def neonize_disconnect(user_id: int, db: Session = Depends(get_db)):
+    """Disconnect and clear session"""
+    from neonize_client import manager
+    manager.disconnect_session(user_id)
+    return {"status": "disconnected"}
+
+
+@router.post("/neonize/send")
+async def neonize_send(request: Request, db: Session = Depends(get_db)):
+    """Send a message via Neonize"""
+    from neonize_client import manager
+    data = await request.json()
+    user_id = data.get("user_id", 1)
+    phone = data.get("phone")
+    message = data.get("message")
+    
+    if not phone or not message:
+        raise HTTPException(status_code=400, detail="Missing phone or message")
+        
+    success = manager.send_message(user_id, phone, message)
+    return {"success": success}
