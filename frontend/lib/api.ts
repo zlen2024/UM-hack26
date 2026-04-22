@@ -143,3 +143,11 @@ export const whatsapp = {
   }) => api.post('/whatsapp/config', data),
   status: () => api.get('/whatsapp/status'),
 };
+
+export const integrations = {
+  zapier: {
+    status: () => api.get('/integrations/zapier'),
+    saveKey: (data: { api_key: string }) => api.put('/integrations/zapier', data),
+    clear: () => api.delete('/integrations/zapier'),
+  },
+};

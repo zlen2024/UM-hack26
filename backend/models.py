@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Date,
     Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -52,6 +53,9 @@ class User(Base):
         "Activity", back_populates="owner", foreign_keys="Activity.user_id"
     )
     emails = relationship("Email", back_populates="owner")
+    integration_credentials = relationship(
+        "IntegrationCredential", back_populates="user"
+    )
 
 
 class Contact(Base):
@@ -184,3 +188,19 @@ class AgentSession(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User")
+
+
+class IntegrationCredential(Base):
+    __tablename__ = "integration_credentials"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_integration_credentials_user_provider"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    provider = Column(String, nullable=False, index=True)
+    secret_value = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="integration_credentials")

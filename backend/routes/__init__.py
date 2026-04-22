@@ -9,6 +9,7 @@ from . import users
 from . import agent
 from . import google_calendar
 from . import gmail
+from . import integrations
 
 __all__ = [
     'auth',
@@ -21,4 +22,5 @@ __all__ = [
     'agent',
     'google_calendar',
     'gmail',
+    'integrations',
 ]

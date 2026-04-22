@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { googleCalendar, whatsapp } from '@/lib/api';
+import { googleCalendar, integrations, whatsapp } from '@/lib/api';
 import { User, Mail, Calendar, CheckCircle2, XCircle, Zap, Cloud, ShieldCheck, MessageSquare } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -70,6 +70,21 @@ export default function SettingsPage() {
             configured: Boolean(response.data?.oauth_configured),
             authorized: Boolean(response.data?.authorized),
           });
+        }
+        try {
+          const zapierResponse = await integrations.zapier.status();
+          if (isMounted) {
+            setIntegrationStatus((prev) => ({
+              ...prev,
+              zapier: Boolean(zapierResponse.data?.connected),
+            }));
+            localStorage.setItem(
+              'integration_zapier',
+              zapierResponse.data?.connected ? 'on' : 'off'
+            );
+          }
+        } catch (error) {
+          console.error('Failed to load Zapier status', error);
         }
       } catch (error) {
         console.error('Failed to load Google Calendar status', error);
@@ -165,6 +180,8 @@ export default function SettingsPage() {
     try {
       if (key === 'calendar') {
         await googleCalendar.clearCredentials();
+      } else if (key === 'zapier') {
+        await integrations.zapier.clear();
       } else if (key === 'whatsapp') {
         localStorage.removeItem('whatsapp_phone_number_id');
       }
@@ -232,6 +249,15 @@ export default function SettingsPage() {
           user_id: user.id,
           has_app_secret: Boolean(fields.app_secret),
         });
+      } else if (key === 'zapier') {
+        const apiKey = (fields.apiKey || '').trim();
+        if (!apiKey) {
+          window.alert('Zapier API key is required.');
+          return;
+        }
+        await integrations.zapier.saveKey({ api_key: apiKey });
+        localStorage.setItem(`integration_${key}`, 'on');
+        setIntegrationStatus((prev) => ({ ...prev, [key]: true }));
       } else {
         localStorage.setItem(`integration_${key}`, 'on');
         setIntegrationStatus((prev) => ({ ...prev, [key]: true }));

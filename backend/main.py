@@ -16,6 +16,7 @@ from routes import (
     emails,
     whatsapp,
     privacy,
+    integrations,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
@@ -119,6 +120,7 @@ app.include_router(
     emails.router, prefix="/api/emails", tags=["emails"]
 )
 app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["whatsapp"])
+app.include_router(integrations.router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
 
 

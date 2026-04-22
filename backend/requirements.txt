@@ -18,3 +18,4 @@ openai>=1.0.0
 langgraph
 langchain-openai
 requests
+mcp

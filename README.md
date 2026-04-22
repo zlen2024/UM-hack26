@@ -37,6 +37,14 @@ A full-stack CRM application built with FastAPI (backend) and Next.js (frontend)
 
    The API will be available at http://localhost:8000
 
+4. Optional: start the MCP server for AI-agent workflows:
+   ```powershell
+   cd backend
+   python mcp_server.py
+   ```
+
+   This exposes CRM tools plus Zapier key storage through MCP.
+
 ### Frontend (Next.js)
 
 1. Navigate to the frontend folder:
@@ -138,6 +146,13 @@ Add more data to existing user:
 ```powershell
 python seed_demo.py --email demo@example.com --password Passw0rd! --contacts 25 --force
 ```
+
+### Zapier Integration
+
+- Open the Settings page in the frontend.
+- Save a Zapier API key under the Zapier integration card.
+- The key is stored in the `integration_credentials` table for the logged-in user.
+- Use the MCP server tools to confirm the connection state if needed.
 
 
 ## Features
