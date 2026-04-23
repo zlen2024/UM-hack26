@@ -297,17 +297,6 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-muted">Loading...</div>
-        </div>
-      </div>
-    );
-  }
-
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (chateryQrCode) {
@@ -332,6 +321,17 @@ export default function SettingsPage() {
       if (interval) clearInterval(interval);
     };
   }, [chateryQrCode, user?.id]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen">
+        <Sidebar />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-muted">Loading...</div>
+        </div>
+      </div>
+    );
+  }
 
   const handleDisconnectChatery = async () => {
     try {
