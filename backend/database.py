@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./crm.db")
 
 # Use NullPool for Supabase connection pooling (prevents prepared statement issues)
 engine = create_engine(DATABASE_URL, poolclass=NullPool)

@@ -1,0 +1,13 @@
+INFO:     Started server process [994376]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+[Migration] Database migrations complete
+[Lifespan] Starting Neonize auto-reconnect...
+[Neonize] Loading existing sessions...
+INFO:     127.0.0.1:54656 - "POST /api/auth/login HTTP/1.1" 401 Unauthorized
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [994376]
+[Lifespan] Shutting down...
