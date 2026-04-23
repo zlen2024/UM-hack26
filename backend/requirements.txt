@@ -20,3 +20,4 @@ langchain-openai
 requests
 neonize==0.3.16.post0
 qrcode[pil]
+jinja2

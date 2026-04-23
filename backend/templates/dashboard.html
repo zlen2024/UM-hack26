@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Nexus Cobalt CRM - Executive Overview</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary-container": "#90a8ff",
+                        "secondary": "#3755c3",
+                        "on-primary-fixed-variant": "#264191",
+                        "inverse-primary": "#b6c4ff",
+                        "surface-dim": "#ccdbf3",
+                        "on-primary-fixed": "#00164e",
+                        "tertiary": "#4b1c00",
+                        "tertiary-container": "#6e2c00",
+                        "surface-container-lowest": "#ffffff",
+                        "surface-container-low": "#eff4ff",
+                        "surface": "#f8f9ff",
+                        "primary-fixed": "#dce1ff",
+                        "on-tertiary-fixed": "#341100",
+                        "on-tertiary": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "inverse-on-surface": "#eaf1ff",
+                        "secondary-fixed-dim": "#b8c4ff",
+                        "on-secondary-fixed-variant": "#173bab",
+                        "on-tertiary-fixed-variant": "#773205",
+                        "on-surface": "#0d1c2e",
+                        "surface-container": "#e6eeff",
+                        "secondary-fixed": "#dde1ff",
+                        "on-background": "#0d1c2e",
+                        "surface-container-highest": "#d5e3fc",
+                        "surface-variant": "#d5e3fc",
+                        "error-container": "#ffdad6",
+                        "on-secondary-container": "#00217a",
+                        "on-surface-variant": "#444651",
+                        "primary-container": "#1e3a8a",
+                        "primary": "#00236f",
+                        "on-error-container": "#93000a",
+                        "tertiary-fixed-dim": "#ffb691",
+                        "primary-fixed-dim": "#b6c4ff",
+                        "surface-bright": "#f8f9ff",
+                        "on-primary": "#ffffff",
+                        "tertiary-fixed": "#ffdbcb",
+                        "on-tertiary-container": "#f39461",
+                        "on-secondary-fixed": "#001453",
+                        "surface-tint": "#4059aa",
+                        "on-error": "#ffffff",
+                        "inverse-surface": "#233144",
+                        "background": "#f8f9ff",
+                        "outline": "#757682",
+                        "outline-variant": "#c5c5d3",
+                        "error": "#ba1a1a",
+                        "surface-container-high": "#dce9ff",
+                        "secondary-container": "#708cfd"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Inter"],
+                        "display": ["Inter"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .donut-segment {
+            transition: stroke-dashoffset 0.35s;
+            transform: rotate(-90deg);
+            transform-origin: 50% 50%;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-surface text-on-surface flex min-h-screen">
+<!-- NavigationDrawer: Authority Source JSON -->
+<aside class="h-screen w-72 flex-col fixed left-0 top-0 bg-slate-50 dark:bg-slate-950 flex flex-col py-8 px-4 space-y-2 h-full border-r border-slate-100 dark:border-slate-800 hidden md:flex z-50">
+<div class="mb-10 px-4">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-xl bg-primary-container flex items-center justify-center text-on-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">shield</span>
+</div>
+<div>
+<h2 class="font-inter text-sm font-medium tracking-wide text-blue-800 dark:text-blue-400">Command Center</h2>
+<p class="text-[10px] text-slate-600 dark:text-slate-400 opacity-80 uppercase tracking-widest">UM CRM Admin</p>
+</div>
+</div>
+</div>
+<nav class="flex-1 space-y-1">
+<!-- Active State Logic applied to Dashboard -->
+<a class="flex items-center gap-4 px-4 py-3 text-blue-900 dark:text-blue-100 font-bold border-r-4 border-blue-800 dark:border-blue-500 bg-blue-50/50 dark:bg-blue-900/10 hover:translate-x-1 transition-all duration-300" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-inter text-sm font-medium tracking-wide">Dashboard</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-slate-600 dark:text-slate-400 opacity-80 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:translate-x-1 transition-all duration-300" href="#">
+<span class="material-symbols-outlined" data-icon="analytics">analytics</span>
+<span class="font-inter text-sm font-medium tracking-wide">Pipeline</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-slate-600 dark:text-slate-400 opacity-80 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:translate-x-1 transition-all duration-300" href="#">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+<span class="font-inter text-sm font-medium tracking-wide">Contacts</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-slate-600 dark:text-slate-400 opacity-80 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:translate-x-1 transition-all duration-300" href="#">
+<span class="material-symbols-outlined" data-icon="assignment">assignment</span>
+<span class="font-inter text-sm font-medium tracking-wide">Tasks</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-slate-600 dark:text-slate-400 opacity-80 hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:translate-x-1 transition-all duration-300" href="#">
+<span class="material-symbols-outlined" data-icon="insights">insights</span>
+<span class="font-inter text-sm font-medium tracking-wide">Analytics</span>
+</a>
+</nav>
+<div class="mt-auto pt-6 border-t border-blue-100/50 dark:border-blue-900/20 px-4">
+<div class="flex items-center gap-3">
+<img alt="User Avatar" class="w-10 h-10 rounded-full border-2 border-primary-container" data-alt="close-up portrait of a professional executive in a dark blue suit, studio lighting, high contrast" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7b9kfXuMmAn-pvl3N9vVRcnBLy4ieQ9r9D106MBfO0GO7pb5MxXPSn8njuL-h2EyySFtqAmX2Q9Xk3s5iDvOBVkrqLD79XdQT_HqqlGHrLKXC2X-TP0Rr9qNkmXp4MItNDqrdh9lllxYJpcjn05-OV7_BivREXEQ7NVZJZJxXVTgMjoP9EKQgWQkJcvjGL9tD6uw5Oqi4of0n8fi680mS3khSCWz-PBROysaZhKjXlg3by7-b6oHx50Y0BvPVTVM6ApNTiTKe-wI"/>
+<div class="overflow-hidden">
+<p class="text-xs font-bold text-blue-900 dark:text-blue-100 truncate">Executive Profile</p>
+<p class="text-[10px] text-slate-500">Global Strategy</p>
+</div>
+</div>
+</div>
+</aside>
+<main class="flex-1 md:ml-72 flex flex-col min-h-screen">
+<!-- TopAppBar: Authority Source JSON -->
+<header class="w-full sticky top-0 z-40 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md shadow-[0px_20px_40px_rgba(13,28,46,0.06)] flex items-center justify-between px-8 h-20 w-full">
+<div class="flex items-center gap-4">
+<button class="md:hidden text-blue-900 dark:text-blue-100 active:scale-95 duration-200">
+<span class="material-symbols-outlined">menu</span>
+</button>
+<h1 class="font-inter tracking-tight font-bold text-2xl text-blue-900 dark:text-blue-100">Executive Overview</h1>
+</div>
+<div class="flex items-center gap-6">
+<div class="hidden lg:flex items-center bg-surface-container-low px-4 py-2 rounded-full border border-outline-variant/15">
+<span class="material-symbols-outlined text-outline text-sm mr-2">search</span>
+<input class="bg-transparent border-none focus:ring-0 text-sm w-48 text-on-surface" placeholder="Search records..." type="text"/>
+</div>
+<div class="flex items-center gap-4">
+<button class="w-10 h-10 rounded-full flex items-center justify-center text-slate-500 hover:bg-blue-50 transition-colors">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<img alt="Executive Profile" class="w-10 h-10 rounded-full object-cover shadow-sm" data-alt="close-up portrait of a professional executive in a dark blue suit, studio lighting, high contrast" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBhSwtuNBaXVs4Ybm36I78CcCnoAjitud4qiBMXu84EgQxZCJk8Kf6q0encM63Ijbv5VpsU0JSIR6YjCDPueCVuiqoijI_CiTd2iksnxDKrIdC0iu-Mgrh7DFykkGCeNwqcbqBcNlyEHcgK__7PyA6nggVLwIs3trXCjN_4HS0t8MYEQ31TFbokXBBwo-Fi-hrQ89K2tkpY-fIXwtft1KsASQ6t5LUqERc4jvuzqgw01_gxOQZ_hE0v9HV6aGXzRF_mDHs_ZNfrpmo"/>
+</div>
+</div>
+</header>
+<!-- Content Canvas -->
+<div class="p-8 lg:p-12 space-y-12">
+<!-- Stat Cards (Row) -->
+<section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+<!-- Total Contacts -->
+<div class="bg-surface-container-lowest p-6 rounded-xl shadow-[0px_20px_40px_rgba(13,28,46,0.06)] group hover:translate-y-[-4px] transition-all duration-300 border border-outline-variant/5">
+<div class="flex justify-between items-start mb-4">
+<div class="p-3 bg-blue-50 rounded-lg text-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">contacts</span>
+</div>
+<span class="text-[10px] font-bold text-tertiary-fixed-dim bg-tertiary/5 px-2 py-1 rounded-full uppercase tracking-tighter">+12%</span>
+</div>
+<p class="text-sm font-medium text-outline mb-1">Total Contacts</p>
+<h3 class="text-3xl font-extrabold text-on-surface tracking-tight">{{ metrics.total_contacts }}</h3>
+</div>
+<!-- Pipeline Value -->
+<div class="bg-surface-container-lowest p-6 rounded-xl shadow-[0px_20px_40px_rgba(13,28,46,0.06)] group hover:translate-y-[-4px] transition-all duration-300 border border-outline-variant/5">
+<div class="flex justify-between items-start mb-4">
+<div class="p-3 bg-blue-50 rounded-lg text-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">account_balance_wallet</span>
+</div>
+<span class="text-[10px] font-bold text-tertiary-fixed-dim bg-tertiary/5 px-2 py-1 rounded-full uppercase tracking-tighter">Healthy</span>
+</div>
+<p class="text-sm font-medium text-outline mb-1">Pipeline Value</p>
+<h3 class="text-3xl font-extrabold text-on-surface tracking-tight">{{ metrics.pipeline_value }}</h3>
+</div>
+<!-- Won Value -->
+<div class="bg-surface-container-lowest p-6 rounded-xl shadow-[0px_20px_40px_rgba(13,28,46,0.06)] group hover:translate-y-[-4px] transition-all duration-300 border border-outline-variant/5">
+<div class="flex justify-between items-start mb-4">
+<div class="p-3 bg-blue-50 rounded-lg text-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">trophy</span>
+</div>
+<span class="text-[10px] font-bold text-tertiary-fixed-dim bg-tertiary/5 px-2 py-1 rounded-full uppercase tracking-tighter">Target 88%</span>
+</div>
+<p class="text-sm font-medium text-outline mb-1">Won Value</p>
+<h3 class="text-3xl font-extrabold text-on-surface tracking-tight">{{ metrics.won_value }}</h3>
+</div>
+<!-- Open Tasks -->
+<div class="bg-surface-container-lowest p-6 rounded-xl shadow-[0px_20px_40px_rgba(13,28,46,0.06)] group hover:translate-y-[-4px] transition-all duration-300 border border-outline-variant/5">
+<div class="flex justify-between items-start mb-4">
+<div class="p-3 bg-blue-50 rounded-lg text-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">task_alt</span>
+</div>
+<span class="text-[10px] font-bold text-error bg-error-container/20 px-2 py-1 rounded-full uppercase tracking-tighter">Urgent</span>
+</div>
+<p class="text-sm font-medium text-outline mb-1">Open Tasks</p>
+<h3 class="text-3xl font-extrabold text-on-surface tracking-tight">{{ metrics.open_tasks }}</h3>
+</div>
+</section>
+<!-- Main Insights Grid -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+<!-- Pipeline Mix: Donut Chart -->
+<section class="lg:col-span-4 bg-surface-container-lowest p-8 rounded-xl shadow-[0px_20px_40px_rgba(13,28,46,0.06)] border border-outline-variant/5 h-full">
+<div class="flex items-center justify-between mb-8">
+<h2 class="text-lg font-bold text-on-surface">Pipeline Mix</h2>
+<button class="text-primary text-xs font-semibold hover:underline">Details</button>
+</div>
+<div class="relative flex justify-center mb-8">
+<svg class="w-48 h-48" viewbox="0 0 36 36">
+<path class="text-surface-container" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="4"></path>
+<path class="text-primary donut-segment" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="40, 100" stroke-linecap="round" stroke-width="4"></path>
+<path class="text-secondary donut-segment" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="25, 100" stroke-dashoffset="-40" stroke-linecap="round" stroke-width="4"></path>
+<path class="text-secondary-container donut-segment" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="20, 100" stroke-dashoffset="-65" stroke-linecap="round" stroke-width="4"></path>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center">
+<span class="text-2xl font-black text-primary">85%</span>
+<span class="text-[10px] uppercase font-bold text-outline">Velocity</span>
+</div>
+</div>
+<ul class="space-y-4">
+                        {% for stage in pipeline %}
+                        <li class="flex items-center justify-between group">
+<div class="flex items-center gap-3">
+<span class="w-2 h-2 rounded-full {{ loop.cycle('bg-primary', 'bg-secondary', 'bg-secondary-container', 'bg-primary-container') }}"></span>
+<span class="text-sm font-medium text-on-surface-variant">{{ stage.name }}</span>
+</div>
+<div class="flex items-center gap-4">
+<span class="text-sm font-bold text-on-surface">{{ stage.value }}</span>
+<span class="text-[10px] text-outline opacity-0 group-hover:opacity-100 transition-opacity">{{ stage.percentage }}%</span>
+</div>
+</li>
+                        {% endfor %}
+                    </ul>
+</section>
+<!-- Next Actions & Top Opportunities -->
+<div class="lg:col-span-8 space-y-8">
+<!-- Next Actions -->
+<section class="bg-surface-container-lowest p-8 rounded-xl shadow-[0px_20px_40px_rgba(13,28,46,0.06)] border border-outline-variant/5">
+<div class="flex items-center justify-between mb-6">
+<h2 class="text-lg font-bold text-on-surface">Next Actions</h2>
+<button class="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold hover:brightness-110 active:scale-95 transition-all">
+                                New Task
+                            </button>
+</div>
+<div class="space-y-1">
+                            {% for task in next_tasks %}
+                            <div class="flex items-center justify-between p-4 rounded-xl hover:bg-surface-container-low transition-colors group">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-full border-2 border-outline-variant flex items-center justify-center group-hover:border-primary group-hover:bg-primary/5 transition-all">
+<span class="material-symbols-outlined text-outline group-hover:text-primary text-sm">check</span>
+</div>
+<div>
+<p class="text-sm font-bold text-on-surface">{{ task.title }}</p>
+<p class="text-xs text-outline">{{ task.due_date }} • {{ task.priority }}</p>
+</div>
+</div>
+<div class="flex -space-x-2">
+<img class="w-6 h-6 rounded-full border-2 border-white" data-alt="headshot of a smiling business associate, professional lightning" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAWs72UXvp_bhKHOW2aBGVZceUikOp1AYLPsWUaSdVXyX1Fr5ET7iZSqCAEvNpWr0D2fFuVyeQy59_a_jmL9lWKJPCr6POWT5FK9yigFvD_vF3yxY4cj4jRA7oMuHUD0fH3GyASuAZ6sMPR1XfhQ-ihZ9cgyPPcrFikeB3apCsqWjiPevXa2m-1uX0f-tzv4d3jvAZEqCM-XelKYIQLvQDKQqeCoDorSRw_Bhs3WnDk17g0vrXsJ96Fo4ZkJDjkRvnjqtq86SslmZs"/>
+<img class="w-6 h-6 rounded-full border-2 border-white" data-alt="headshot of a focused project manager, office background blurred" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBZRM5ff52f9_qxl7jM3IQmZBZI33hqMLDCS3i00S-DPmyuM30Sug2OotL887hueo8hXYHumVx8UDYxZNMLy4piMqIJuZQk_7hZQ3nTLRY0GcW3HYK7dLJxYPiP2Zy2RIFMe1MxD3HOOXt7lgfgdYwRXoxtIQ62Ro2SE-6DnspgskEWOnO11kozjktpvGCDEiurpnaZv--ijGsCkICq8WqfO6Kq3jEvWUc_uKWZew-6Yyjhw_KYHE1oU350dNKIpVn0w5wXOwre_z8"/>
+</div>
+</div>
+                            {% endfor %}
+                        </div>
+</section>
+<!-- Top Opportunities -->
+<section class="bg-surface-container-lowest p-8 rounded-xl shadow-[0px_20px_40px_rgba(13,28,46,0.06)] border border-outline-variant/5">
+<h2 class="text-lg font-bold text-on-surface mb-6">High-Yield Opportunities</h2>
+<div class="overflow-x-auto">
+
+
+                                <table class="w-full text-left border-separate border-spacing-y-3">
+<thead>
+<tr class="text-[10px] font-black text-outline uppercase tracking-widest">
+<th class="pb-2 px-4">Opportunity</th>
+<th class="pb-2">Confidence</th>
+<th class="pb-2">Value</th>
+<th class="pb-2 text-right">Action</th>
+</tr>
+</thead>
+{% for opp in top_opportunities %}
+<tbody><tr class="bg-surface-container-low/30 hover:bg-surface-container-low transition-all">
+<td class="py-4 px-4 rounded-l-xl">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-primary-container/20 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-sm">business</span>
+</div>
+<div>
+<p class="text-sm font-bold text-on-surface">{{ opp.account_name }}</p>
+<p class="text-[10px] text-outline">{{ opp.closing_date }}</p>
+</div>
+</div>
+</td>
+<td class="py-4">
+<div class="w-24 h-1.5 bg-surface-container rounded-full overflow-hidden">
+<div class="h-full bg-secondary" style="width: {{ opp.confidence }}%"></div>
+</div>
+<span class="text-[10px] font-bold text-secondary">{{ opp.confidence }}%</span>
+</td>
+<td class="py-4">
+<span class="text-sm font-black text-on-surface">{{ opp.value }}</span>
+</td>
+<td class="py-4 px-4 rounded-r-xl text-right">
+<button class="w-8 h-8 rounded-full flex items-center justify-center hover:bg-primary hover:text-white transition-colors text-outline">
+<span class="material-symbols-outlined text-sm">arrow_forward</span>
+</button>
+</td>
+</tr></tbody>
+{% endfor %}
+</table>
+</div>
+</section>
+</div>
+</div>
+<!-- Workload Pulse -->
+<section class="bg-primary-container text-on-primary rounded-2xl overflow-hidden relative shadow-[0px_40px_80px_rgba(0,35,111,0.2)]">
+<!-- Decorative Background -->
+<div class="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-secondary/30 to-transparent"></div>
+<div class="absolute -bottom-10 -right-10 w-64 h-64 rounded-full bg-secondary/20 blur-[100px]"></div>
+<div class="relative p-10 flex flex-col lg:flex-row items-center justify-between gap-12">
+<div class="max-w-xl">
+<span class="text-[10px] font-black uppercase tracking-[0.2em] text-on-primary-container mb-4 block">Workload Pulse</span>
+<h2 class="text-3xl font-extrabold tracking-tight mb-4">Enterprise Capacity is at 74%</h2>
+<p class="text-on-primary-container leading-relaxed">System-wide performance is optimized. Strategic resource allocation is recommended for the Northeast sector to handle upcoming pipeline surges.</p>
+<div class="mt-8 flex gap-4">
+<button class="bg-white text-primary px-8 py-3 rounded-lg font-bold text-sm hover:bg-surface-container transition-colors shadow-lg shadow-black/10">View Resource Plan</button>
+<button class="border border-white/20 text-white px-8 py-3 rounded-lg font-bold text-sm hover:bg-white/10 transition-colors">Adjust Thresholds</button>
+</div>
+</div>
+<div class="flex gap-4 items-end h-40">
+<div class="w-12 bg-on-primary-container/20 rounded-t-lg h-24 hover:h-32 transition-all duration-500"></div>
+<div class="w-12 bg-on-primary-container/40 rounded-t-lg h-36 hover:h-40 transition-all duration-500"></div>
+<div class="w-12 bg-white rounded-t-lg h-28 hover:h-36 transition-all duration-500 relative group">
+<div class="absolute -top-10 left-1/2 -translate-x-1/2 bg-white text-primary text-[10px] font-black px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">Peak</div>
+</div>
+<div class="w-12 bg-on-primary-container/30 rounded-t-lg h-16 hover:h-24 transition-all duration-500"></div>
+<div class="w-12 bg-on-primary-container/60 rounded-t-lg h-32 hover:h-38 transition-all duration-500"></div>
+</div>
+</div>
+</section>
+</div>
+<footer class="mt-auto p-8 text-center">
+<p class="text-[10px] text-outline font-medium uppercase tracking-widest">Nexus Cobalt Enterprise • Command Center v2.4.0</p>
+</footer>
+</main>
+</body></html>

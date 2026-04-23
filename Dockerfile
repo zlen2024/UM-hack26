@@ -1,13 +1,10 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV NEXT_TELEMETRY_DISABLED=1
 
-# Install Node.js
+# Install required system packages
 RUN apt-get update && apt-get install -y curl libmagic1 && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -16,27 +13,17 @@ WORKDIR /app
 COPY backend/requirements.txt backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
-# Install frontend dependencies
-COPY frontend/package*.json frontend/
-RUN cd frontend && npm ci
-
-# Copy application code
+# Copy backend code
 COPY backend backend/
-COPY frontend frontend/
-
-# Build frontend
-RUN cd frontend && npm run build
 
 # Create start script
 RUN echo '#!/bin/bash\n\
 cd /app/backend\n\
-uvicorn main:app --host 127.0.0.1 --port 8000 &\n\
-cd /app/frontend\n\
-exec npm start\n\
+exec uvicorn main:app --host 0.0.0.0 --port 8000\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
 # Expose port and start
-EXPOSE 3000
-ENV PORT=3000
+EXPOSE 8000
+ENV PORT=8000
 ENV HOSTNAME=0.0.0.0
 CMD ["/app/start.sh"]
