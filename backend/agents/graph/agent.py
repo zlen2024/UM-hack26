@@ -3,7 +3,6 @@ import json
 from typing import Optional
 from openai import OpenAI
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.tools import ToolNode
 
 from .state import AgentState
 from .tools import CRM_TOOLS, UserContext
