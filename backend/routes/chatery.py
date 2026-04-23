@@ -10,6 +10,13 @@ import json
 router = APIRouter()
 
 CHATERY_API_URL = "https://chatery-whatsapp.fly.dev/api/whatsapp"
+CHATERY_API_KEY = os.environ.get("CHATERY_API_KEY", "")
+
+def get_chatery_headers():
+    headers = {"Content-Type": "application/json"}
+    if CHATERY_API_KEY:
+        headers["X-Api-Key"] = CHATERY_API_KEY
+    return headers
 
 class ConnectRequest(BaseModel):
     user_id: int
@@ -40,7 +47,7 @@ def connect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
             }
         ]
     }
-    headers = {"Content-Type": "application/json"}
+    headers = get_chatery_headers()
 
     try:
         response = requests.post(url, json=payload, headers=headers)
@@ -65,7 +72,7 @@ def get_qr(user_id: int, db: Session = Depends(get_db)):
     session_id = str(user_id)
     url = f"{CHATERY_API_URL}/sessions/{session_id}/qr/image"
     try:
-        response = requests.get(url)
+        response = requests.get(url, headers=get_chatery_headers())
         if response.status_code == 200:
             data = response.json()
             return data
@@ -84,7 +91,7 @@ def disconnect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
 
     url = f"{CHATERY_API_URL}/sessions/{session_id}"
     try:
-        requests.delete(url)
+        requests.delete(url, headers=get_chatery_headers())
     except Exception as e:
         print(f"Error deleting session on Chatery API: {e}")
 
@@ -144,7 +151,7 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
                 "message": response_text
             }
             try:
-                requests.post(url, json=send_payload, headers={"Content-Type": "application/json"})
+                requests.post(url, json=send_payload, headers=get_chatery_headers())
             except Exception as e:
                 print(f"Error sending reply via Chatery: {e}")
 
