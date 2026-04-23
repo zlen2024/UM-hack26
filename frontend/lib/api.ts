@@ -152,3 +152,11 @@ export const telegram = {
     webhook_url: string;
   }) => api.post('/telegram/config', data),
 };
+
+export const chatery = {
+  connect: (data: { user_id: number; webhook_url: string }) =>
+    api.post('/chatery/connect', data),
+  disconnect: (data: { user_id: number; webhook_url: string }) =>
+    api.post('/chatery/disconnect', data),
+  status: (userId: number) => api.get(`/chatery/status/${userId}`),
+};

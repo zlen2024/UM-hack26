@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from database import engine, Base
 from routes import (
+    chatery,
     auth,
     contacts,
     opportunities,
@@ -97,6 +98,26 @@ def ensure_whatsapp_table() -> None:
                 conn.execute(text("ALTER TABLE whatsapp_phone_numbers ADD COLUMN app_secret VARCHAR"))
 
 
+
+def ensure_chatery_whatsapp_table() -> None:
+    with engine.begin() as conn:
+        result = conn.execute(text(
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'chatery_whatsapp_sessions'"
+        )).fetchone()
+        if not result:
+            print("Creating chatery_whatsapp_sessions table...")
+            conn.execute(text('''
+            CREATE TABLE chatery_whatsapp_sessions (
+                session_id VARCHAR PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                status VARCHAR DEFAULT 'disconnected',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            '''))
+            conn.execute(text("CREATE INDEX idx_chatery_whatsapp_user_id ON chatery_whatsapp_sessions(user_id)"))
+            conn.execute(text("CREATE INDEX idx_chatery_whatsapp_session_id ON chatery_whatsapp_sessions(session_id)"))
+
 def ensure_telegram_table() -> None:
     with engine.begin() as conn:
         result = conn.execute(text(
@@ -118,6 +139,7 @@ ensure_activity_columns()
 ensure_user_columns()
 ensure_whatsapp_table()
 ensure_telegram_table()
+ensure_chatery_whatsapp_table()
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
@@ -128,6 +150,7 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(activities.router, prefix="/api/activities", tags=["activities"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(chatery.router, prefix="/api/chatery", tags=["chatery"])
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(
     google_calendar.router, prefix="/api/google-calendar", tags=["google-calendar"]
