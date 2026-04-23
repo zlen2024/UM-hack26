@@ -6,6 +6,9 @@ from database import get_db
 from models import ChateryWhatsAppSession, User
 from pydantic import BaseModel
 import json
+from dotenv import load_dotenv
+
+load_dotenv()
 
 router = APIRouter()
 
