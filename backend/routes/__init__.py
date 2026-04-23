@@ -1,4 +1,5 @@
 # Routes package
+from . import chatery
 from . import auth
 from . import contacts
 from . import opportunities
@@ -11,6 +12,7 @@ from . import google_calendar
 from . import gmail
 
 __all__ = [
+    'chatery',
     'auth',
     'contacts',
     'opportunities',

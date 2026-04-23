@@ -40,6 +40,7 @@ class User(Base):
     agent_phone_number = Column(String, nullable=True, index=True)
 
     whatsapp_numbers = relationship("WhatsAppPhoneNumber", back_populates="user")
+    chatery_whatsapp_sessions = relationship("ChateryWhatsAppSession", back_populates="user")
     telegram_bots = relationship("TelegramBot", back_populates="user")
 
     contacts = relationship(
@@ -185,6 +186,18 @@ class AgentSession(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User")
+
+
+class ChateryWhatsAppSession(Base):
+    __tablename__ = "chatery_whatsapp_sessions"
+
+    session_id = Column(String, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String, default="disconnected")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="chatery_whatsapp_sessions")
 
 class TelegramBot(Base):
     __tablename__ = "telegram_bots"
