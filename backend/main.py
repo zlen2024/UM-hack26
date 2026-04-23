@@ -1,5 +1,11 @@
 import contextlib
 from fastapi import FastAPI
+
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi import Request
+
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from database import engine, Base
@@ -30,6 +36,10 @@ async def lifespan(app: FastAPI):
     print("[Lifespan] Shutting down...")
 
 app = FastAPI(title="UM CRM API", version="1.0.0", lifespan=lifespan)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -194,3 +204,8 @@ def health():
 @app.get("/api/test-google")
 def test_google():
     return {"message": "Test route works!"}
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
