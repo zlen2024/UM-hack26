@@ -36,7 +36,7 @@ def connect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
         "webhooks": [
             {
                 "url": req.webhook_url,
-                "events": ["all"]
+                "events": ["message", "message_ack"]
             }
         ]
     }
