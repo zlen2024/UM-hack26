@@ -2,10 +2,14 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { googleCalendar, whatsapp, telegram } from '@/lib/api';
+import { googleCalendar, whatsapp, telegram, chatery } from '@/lib/api';
 import { User, Mail, Calendar, CheckCircle2, XCircle, Zap, Cloud, ShieldCheck, MessageSquare } from 'lucide-react';
 
 export default function SettingsPage() {
+  const [chateryConnected, setChateryConnected] = useState(false);
+  const [chateryQrCode, setChateryQrCode] = useState<string | null>(null);
+  const [showChateryWarning, setShowChateryWarning] = useState(false);
+
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -118,6 +122,19 @@ export default function SettingsPage() {
       }
     };
     checkTelegramStatus();
+    const checkChateryStatus = async () => {
+      try {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          const res = await chatery.status(user.id);
+          setChateryConnected(res.data.status === 'connected' || res.data.status === 'qr_ready' || res.data.status === 'connecting');
+        }
+      } catch (err) {
+        console.error('Failed to check Chatery status', err);
+      }
+    };
+    checkChateryStatus();
 
     return () => {
       isMounted = false;

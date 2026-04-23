@@ -100,40 +100,23 @@ def ensure_whatsapp_table() -> None:
 
 
 def ensure_chatery_whatsapp_table() -> None:
-    try:
-        with engine.connect() as conn:
-            # Check if table exists (SQLite compatible)
-            result = conn.execute(text(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='chatery_whatsapp_sessions'"
-            ))
-            if not result.first():
-                # Fallback to postgres information_schema for production
-                try:
-                    result = conn.execute(text(
-                        "SELECT table_name FROM information_schema.tables WHERE table_name = 'chatery_whatsapp_sessions'"
-                    ))
-                except Exception:
-                    pass
-
-            if not result.first() if result else True:
-                try:
-                    print("Creating chatery_whatsapp_sessions table...")
-                    conn.execute(text('''
-                    CREATE TABLE chatery_whatsapp_sessions (
-                        session_id VARCHAR PRIMARY KEY,
-                        user_id INTEGER NOT NULL REFERENCES users(id),
-                        status VARCHAR DEFAULT 'disconnected',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                    '''))
-                    conn.execute(text("CREATE INDEX idx_chatery_whatsapp_user_id ON chatery_whatsapp_sessions(user_id)"))
-                    conn.execute(text("CREATE INDEX idx_chatery_whatsapp_session_id ON chatery_whatsapp_sessions(session_id)"))
-                    conn.commit()
-                except Exception as e:
-                    pass
-    except Exception as e:
-        print(f"Error ensuring chatery_whatsapp_sessions table: {e}")
+    with engine.begin() as conn:
+        result = conn.execute(text(
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'chatery_whatsapp_sessions'"
+        )).fetchone()
+        if not result:
+            print("Creating chatery_whatsapp_sessions table...")
+            conn.execute(text('''
+            CREATE TABLE chatery_whatsapp_sessions (
+                session_id VARCHAR PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                status VARCHAR DEFAULT 'disconnected',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            '''))
+            conn.execute(text("CREATE INDEX idx_chatery_whatsapp_user_id ON chatery_whatsapp_sessions(user_id)"))
+            conn.execute(text("CREATE INDEX idx_chatery_whatsapp_session_id ON chatery_whatsapp_sessions(session_id)"))
 
 def ensure_telegram_table() -> None:
     with engine.begin() as conn:
