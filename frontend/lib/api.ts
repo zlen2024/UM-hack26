@@ -159,4 +159,5 @@ export const chatery = {
   disconnect: (data: { user_id: number; webhook_url: string }) =>
     api.post('/chatery/disconnect', data),
   status: (userId: number) => api.get(`/chatery/status/${userId}`),
+  qr: (userId: number) => api.get(`/chatery/qr/${userId}`),
 };

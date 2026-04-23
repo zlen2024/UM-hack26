@@ -308,6 +308,79 @@ export default function SettingsPage() {
     );
   }
 
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (chateryQrCode) {
+      interval = setInterval(async () => {
+        try {
+          if (!user?.id) return;
+          const res = await chatery.status(user.id);
+          if (res.data?.status === 'connected') {
+            setChateryConnected(true);
+            setChateryQrCode(null);
+            window.alert('WhatsApp connected successfully!');
+          } else if (res.data?.status === 'disconnected') {
+            setChateryConnected(false);
+            setChateryQrCode(null);
+          }
+        } catch (err) {
+          console.error('Polling chatery status failed', err);
+        }
+      }, 3000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [chateryQrCode, user?.id]);
+
+  const handleDisconnectChatery = async () => {
+    try {
+      if (!user?.id) return;
+      const webhookUrl = `${window.location.origin}/api/chatery/webhook`;
+      await chatery.disconnect({ user_id: user.id, webhook_url: webhookUrl });
+      setChateryConnected(false);
+      setChateryQrCode(null);
+    } catch (error) {
+      console.error('Failed to disconnect Chatery', error);
+    }
+  };
+
+  const handleConnectChatery = async () => {
+    setShowChateryWarning(false);
+    try {
+      if (!user?.id) {
+        window.alert('User not found. Please login again.');
+        return;
+      }
+      const webhookUrl = `${window.location.origin}/api/chatery/webhook`;
+      const response = await chatery.connect({
+        user_id: user.id,
+        webhook_url: webhookUrl,
+      });
+
+      if (response.data?.success) {
+        setChateryConnected(true);
+        const sessionData = response.data.data;
+        if (sessionData?.qrCode) {
+          setChateryQrCode(sessionData.qrCode);
+        } else {
+          // If no QR code returned, fallback to GET endpoint
+          try {
+            const qrRes = await chatery.qr(user.id);
+            if (qrRes.data?.data?.qrCode) {
+              setChateryQrCode(qrRes.data.data.qrCode);
+            }
+          } catch (err) {
+            console.error('Failed to fetch QR code fallback', err);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to connect Chatery', error);
+      window.alert('Failed to connect Unofficial WhatsApp API.');
+    }
+  };
+
   const handleAuthorizeCalendar = async () => {
     try {
       const redirectUri = `${window.location.origin}/api/auth/callback/google`;
@@ -436,11 +509,20 @@ export default function SettingsPage() {
                 />
                 <IntegrationBox
                   icon={<MessageSquare size={22} className="text-green-500" />}
-                  name="WhatsApp Bot"
-                  desc="Receive and reply to WhatsApp messages."
+                  name="WhatsApp Bot (Official)"
+                  desc="Receive and reply to WhatsApp messages using Meta API."
                   status={integrationStatus.whatsapp ? 'on' : 'off'}
                   onConnect={() => handleConnect('whatsapp')}
                   onDisconnect={() => handleDisconnect('whatsapp')}
+                />
+                
+                <IntegrationBox
+                  icon={<MessageSquare size={22} className="text-emerald-600" />}
+                  name="WhatsApp Bot (Unofficial)"
+                  desc="Connect WhatsApp via QR Code. Use at your own risk."
+                  status={chateryConnected ? 'on' : 'off'}
+                  onConnect={() => setShowChateryWarning(true)}
+                  onDisconnect={handleDisconnectChatery}
                 />
 
                 <IntegrationBox
@@ -498,6 +580,44 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+      
+      {/* Warning Modal */}
+      {showChateryWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="modal-panel w-full max-w-md p-6 relative animate-fade-up">
+            <button className="absolute top-3 right-3 text-muted" onClick={() => setShowChateryWarning(false)}>&times;</button>
+            <h3 className="text-lg font-semibold text-red-600 mb-2">Warning: Unofficial API</h3>
+            <p className="text-sm text-ink mb-4">
+              You are about to connect an unofficial WhatsApp API. Meta does not endorse this. 
+              <strong> You run the risk of having your WhatsApp account banned.</strong> We are not responsible for any bans or issues.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setShowChateryWarning(false)}>Cancel</button>
+              <button className="btn-primary bg-red-600 hover:bg-red-700 border-red-600" onClick={handleConnectChatery}>
+                I Understand, Connect
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Modal */}
+      {chateryQrCode && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="modal-panel w-full max-w-md p-6 relative animate-fade-up text-center">
+            <button className="absolute top-3 right-3 text-muted" onClick={() => setChateryQrCode(null)}>&times;</button>
+            <h3 className="text-lg font-semibold text-ink mb-2">Scan QR Code</h3>
+            <p className="text-sm text-muted mb-4">
+              Open WhatsApp on your phone, go to Linked Devices, and scan this QR code.
+            </p>
+            <div className="flex justify-center mb-4">
+              <img src={chateryQrCode.startsWith('data:') ? chateryQrCode : `data:image/png;base64,${chateryQrCode}`} alt="WhatsApp QR Code" className="w-64 h-64 border rounded" />
+            </div>
+            <button className="btn-primary w-full" onClick={() => setChateryQrCode(null)}>Close</button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

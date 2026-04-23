@@ -36,7 +36,7 @@ def connect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
         "webhooks": [
             {
                 "url": req.webhook_url,
-                "events": ["message", "message_ack"]
+                "events": ["all"]
             }
         ]
     }
@@ -59,6 +59,20 @@ def get_status(user_id: int, db: Session = Depends(get_db)):
     if not session:
         return {"status": "disconnected"}
     return {"status": session.status}
+
+@router.get("/qr/{user_id}")
+def get_qr(user_id: int, db: Session = Depends(get_db)):
+    session_id = str(user_id)
+    url = f"{CHATERY_API_URL}/sessions/{session_id}/qr/image"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            return data
+        else:
+            raise HTTPException(status_code=400, detail="Failed to get QR code")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/disconnect")
 def disconnect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
@@ -90,7 +104,7 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "ok", "message": "No session ID"}
 
     if event == "connection.update":
-        status = payload.get("data", {}).get("status")
+        status = payload.get("data", {}).get("status") or payload.get("status")
         if status:
             session = db.query(ChateryWhatsAppSession).filter(ChateryWhatsAppSession.session_id == session_id).first()
             if session:
