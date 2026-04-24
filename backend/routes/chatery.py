@@ -73,7 +73,7 @@ def get_status(user_id: int, db: Session = Depends(get_db)):
 @router.get("/qr/{user_id}")
 def get_qr(user_id: int, db: Session = Depends(get_db)):
     session_id = str(user_id)
-    url = f"{CHATERY_API_URL}/sessions/{session_id}/qr/image"
+    url = f"{CHATERY_API_URL}/sessions/{session_id}/qr"
     try:
         response = requests.get(url, headers=get_chatery_headers())
         if response.status_code == 200:
