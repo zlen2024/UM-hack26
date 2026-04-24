@@ -59,6 +59,8 @@ def connect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
             return data
         else:
             raise HTTPException(status_code=400, detail=data.get("message", "Failed to connect to Chatery API"))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -80,7 +82,9 @@ def get_qr(user_id: int, db: Session = Depends(get_db)):
             data = response.json()
             return data
         else:
-            raise HTTPException(status_code=400, detail="Failed to get QR code")
+            raise HTTPException(status_code=400, detail=f"Failed to get QR code: {response.text}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
