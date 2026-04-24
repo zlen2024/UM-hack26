@@ -39,6 +39,39 @@ def get_ilmu_client():
 
 # --- LangGraph Setup ---
 
+GATEKEEPER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "response": {"type": "string"},
+        "agent_loop": {"type": "boolean"},
+        "query": {"type": "string"}
+    },
+    "required": ["response", "agent_loop", "query"],
+    "additionalProperties": False
+}
+
+MANAGER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "task": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "args": {"type": "object"}
+                },
+                "required": ["name", "args"],
+                "additionalProperties": False
+            }
+        },
+        "response": {"type": "string"},
+        "knowledge": {"type": "boolean"}
+    },
+    "required": ["task", "response", "knowledge"],
+    "additionalProperties": False
+}
+
 class AgentState(TypedDict, total=False):
     user_input: str
     user_id: int
@@ -86,7 +119,14 @@ RULES:
                 {"role": "user", "content": state.get("user_input", "")},
             ],
             temperature=0,
-            response_format={"type": "json_object"}
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "gatekeeper_response",
+                    "strict": True,
+                    "schema": GATEKEEPER_SCHEMA
+                }
+            }
         )
         content = response.choices[0].message.content
         logger.debug(f"[Gatekeeper] Raw LLM Output: {content}")
@@ -136,7 +176,14 @@ RULES:
                 {"role": "user", "content": user_content},
             ],
             temperature=0,
-            response_format={"type": "json_object"}
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "manager_response",
+                    "strict": True,
+                    "schema": MANAGER_SCHEMA
+                }
+            }
         )
         content = response.choices[0].message.content
         logger.debug(f"[Manager] Raw LLM Output: {content}")
