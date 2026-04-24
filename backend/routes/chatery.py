@@ -227,10 +227,6 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
                 "message": response_text,
                 "typingTime": 1500  # Make it look natural
             }
-            
-            # Explicitly quote/reply to the received message
-            if message_id:
-                send_payload["replyTo"] = message_id
 
             try:
                 requests.post(url, json=send_payload, headers=get_chatery_headers())
