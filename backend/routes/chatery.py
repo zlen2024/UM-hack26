@@ -171,6 +171,7 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
 
     if event == "message":
         message_data = payload.get("data", {})
+        message_id = message_data.get("id")
         from_phone = message_data.get("senderPhone") or message_data.get("from")
         contact_name = message_data.get("senderName") or message_data.get("name") or "Chatery Contact"
         
@@ -223,8 +224,14 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
             send_payload = {
                 "sessionId": session_id,
                 "chatId": from_phone.replace('@s.whatsapp.net', '') if from_phone else "",
-                "message": response_text
+                "message": response_text,
+                "typingTime": 1500  # Make it look natural
             }
+            
+            # Explicitly quote/reply to the received message
+            if message_id:
+                send_payload["replyTo"] = message_id
+
             try:
                 requests.post(url, json=send_payload, headers=get_chatery_headers())
                 logger.info(f"Successfully sent automated reply to {from_phone}")
