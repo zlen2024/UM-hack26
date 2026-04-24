@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 from typing import Dict, Any, Optional, TypedDict, List
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
@@ -9,6 +10,25 @@ from .graph.tools import CRM_TOOLS
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("CS_Agent_Workflow")
+
+def parse_llm_json(content: str) -> dict:
+    if not content:
+        raise ValueError("LLM returned empty content")
+    
+    content = content.strip()
+    
+    # Extract from markdown block if present
+    match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
+    if match:
+        content = match.group(1)
+        
+    # Fallback to finding the first { and last }
+    start_idx = content.find('{')
+    end_idx = content.rfind('}')
+    if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+        content = content[start_idx:end_idx+1]
+        
+    return json.loads(content)
 
 def get_ilmu_client():
     api_key = os.getenv("ILMU_API_KEY", "")
@@ -53,7 +73,7 @@ RULES:
         )
         content = response.choices[0].message.content
         logger.debug(f"[Gatekeeper] Raw LLM Output: {content}")
-        result = json.loads(content)
+        result = parse_llm_json(content)
         logger.info(f"[Gatekeeper] Parsed Result: agent_loop={result.get('agent_loop')}, query='{result.get('query')}'")
     except Exception as e:
         logger.error(f"[Gatekeeper] Error: {e}", exc_info=True)
@@ -103,7 +123,7 @@ RULES:
         )
         content = response.choices[0].message.content
         logger.debug(f"[Manager] Raw LLM Output: {content}")
-        result = json.loads(content)
+        result = parse_llm_json(content)
         tasks_planned = result.get("task", [])
         logger.info(f"[Manager] Parsed Result: knowledge={result.get('knowledge')}, tasks planned={len(tasks_planned)}")
     except Exception as e:
