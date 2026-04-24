@@ -3,6 +3,7 @@ import json
 from typing import Dict, Any, Optional, TypedDict, List
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
+from .graph.tools import CRM_TOOLS
 
 def get_ilmu_client():
     api_key = os.getenv("ILMU_API_KEY", "")
@@ -19,8 +20,9 @@ class AgentState(TypedDict, total=False):
     contact_name: str
     gatekeeper_response: dict
     manager_response: dict
-    current_tasks: List[str]
+    current_tasks: List[dict]
     worker_error: str
+    task_results: List[str]
 
 def gatekeeper_node(state: AgentState) -> dict:
     client = get_ilmu_client()
@@ -56,20 +58,26 @@ RULES:
 
 def manager_node(state: AgentState) -> dict:
     client = get_ilmu_client()
+    
+    tools_description = "\n".join([f"- {t.name}: {t.description}" for t in CRM_TOOLS])
+    
     system_prompt = f"""You are the Master Workflow Planner for a customer service business. You receive queries or system errors and must determine the exact sequence of tasks needed to resolve them. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
 
 RULES:
-1. Output MUST be strictly valid JSON matching the schema: {{"task": ["string"], "response": "string", "knowledge": boolean}}.
+1. Output MUST be strictly valid JSON matching the schema: {{"task": [{{"name": "string", "args": {{}}}}], "response": "string", "knowledge": boolean}}.
 2. If the query requires checking company policy, FAQs, or general information, set "knowledge" to true, and "task" MUST be empty [].
-3. If the query requires executing actions, list the specific tools/steps in the "task" array. "knowledge" MUST be false. Available tasks: ["verify_order", "check_payment_status"].
-4. If you lack information from the user to proceed, OR if you receive an error from a previous task, set "task" to [], "knowledge" to false, and use "response" to ask the user for clarification or inform them of the issue."""
+3. If the query requires executing actions, list the specific tools/steps in the "task" array. "knowledge" MUST be false. Available tasks:
+{tools_description}
+4. If you lack information from the user to proceed, OR if you receive an error from a previous task, set "task" to [], "knowledge" to false, and use "response" to ask the user for clarification or inform them of the issue.
+5. If previous tasks were successful (check Task Results), provide the final "response" summarizing the outcome to the user and set "task" to [] and "knowledge" to false."""
 
     gatekeeper_resp = state.get("gatekeeper_response", {})
     query = gatekeeper_resp.get("query", state.get("user_input", ""))
     worker_error = state.get("worker_error", "")
     current_tasks = state.get("current_tasks", [])
+    task_results = state.get("task_results", [])
 
-    user_content = f"Query: {query}\nPrevious Tasks: {current_tasks}\nWorker Error: {worker_error}"
+    user_content = f"Query: {query}\nPrevious Tasks: {current_tasks}\nTask Results: {task_results}\nWorker Error: {worker_error}"
 
     try:
         response = client.chat.completions.create(
@@ -101,32 +109,43 @@ RULES:
 def worker_node(state: AgentState) -> dict:
     tasks = state.get("current_tasks", [])
     error = ""
+    task_results = []
     
-    # Mock Tools
-    def verify_order(task: str) -> str:
-        if "fail" in task.lower():
-            raise ValueError("Order verification failed.")
-        return "Order verified successfully."
-        
-    def check_payment_status(task: str) -> str:
-        if "error" in task.lower():
-            raise ValueError("Payment system is currently down.")
-        return "Payment cleared."
-        
+    tool_map = {t.name: t for t in CRM_TOOLS}
+    
     for task in tasks:
         try:
-            if "order" in task.lower():
-                verify_order(task)
-            elif "payment" in task.lower():
-                check_payment_status(task)
+            if not isinstance(task, dict):
+                raise ValueError(f"Task format invalid, expected dict but got {type(task)}")
+            
+            tool_name = task.get("name")
+            tool_args = task.get("args", {})
+            
+            if "user_id" not in tool_args and state.get("user_id"):
+                tool_args["user_id"] = state.get("user_id")
+                
+            if tool_name not in tool_map:
+                raise ValueError(f"Tool '{tool_name}' not found.")
+            
+            tool = tool_map[tool_name]
+            result = tool.invoke(tool_args)
+            
+            if isinstance(result, str):
+                try:
+                    res_dict = json.loads(result)
+                    if not res_dict.get("success", True):
+                        raise ValueError(f"Tool {tool_name} failed: {res_dict.get('error', 'Unknown error')} - {res_dict.get('message', '')}")
+                    task_results.append(f"Tool {tool_name} success: {result}")
+                except json.JSONDecodeError:
+                    task_results.append(f"Tool {tool_name} output: {result}")
             else:
-                # Mock generic success for unknown tasks
-                pass
+                task_results.append(f"Tool {tool_name} output: {result}")
+            
         except Exception as e:
             error = str(e)
             break # Break loop on first failure
             
-    return {"worker_error": error}
+    return {"worker_error": error, "task_results": task_results}
 
 def gatekeeper_router(state: AgentState) -> str:
     agent_loop = state.get("gatekeeper_response", {}).get("agent_loop", False)
