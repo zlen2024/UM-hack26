@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -34,6 +34,38 @@ def send_telegram_message(bot_token: str, chat_id: str, message: str) -> Dict[st
         return {"success": False, "error": result}
 
     return {"success": True, "response": result}
+
+def process_telegram_update_and_reply(
+    *,
+    bot_token: str,
+    user_id: int,
+    chat_id: str,
+    contact_name: str,
+    text: str,
+) -> None:
+    try:
+        from agents.cs_agent import process_telegram_message
+
+        message_data = {
+            "user_id": user_id,
+            "contact_name": contact_name,
+            "chat_id": chat_id,
+            "message": text,
+        }
+
+        result = process_telegram_message(message_data)
+        response_text = result.get("response", "")
+
+        if not response_text:
+            return
+
+        send_telegram_message(
+            bot_token=bot_token,
+            chat_id=chat_id,
+            message=response_text,
+        )
+    except Exception as e:
+        print(f"[Telegram] Background task error: {e}")
 
 @router.post("/config")
 def create_telegram_config(
@@ -99,7 +131,7 @@ def get_telegram_config(bot_token: str, db: Session = Depends(get_db)):
     }
 
 @router.post("/webhook/{bot_token}")
-async def receive_webhook(bot_token: str, request: Request, db: Session = Depends(get_db)):
+async def receive_webhook(bot_token: str, request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Handle incoming Telegram webhook POST."""
     raw_body = await request.body()
     try:
@@ -138,27 +170,13 @@ async def receive_webhook(bot_token: str, request: Request, db: Session = Depend
         print(f"[Telegram] User not found for id: {bot_config.user_id}")
         return JSONResponse(status_code=200, content={"status": "error", "reason": "user_not_found"})
 
-    message_data = {
-        "user_id": user.id,
-        "contact_name": contact_name,
-        "chat_id": chat_id,
-        "message": text_body,
-    }
+    background_tasks.add_task(
+        process_telegram_update_and_reply,
+        bot_token=bot_token,
+        user_id=user.id,
+        chat_id=chat_id,
+        contact_name=contact_name,
+        text=text_body,
+    )
 
-    from agents.cs_agent import process_telegram_message
-
-    result = process_telegram_message(message_data)
-
-    response_text = result.get("response", "")
-    print(f"[Telegram] Response to send: {response_text}")
-
-    if response_text:
-        print(f"[Telegram] Sending reply to {chat_id}: {response_text}")
-        send_result = send_telegram_message(
-            bot_token=bot_token,
-            chat_id=chat_id,
-            message=response_text
-        )
-        result["sent"] = send_result
-
-    return JSONResponse(status_code=200, content={"status": "processed", "result": result})
+    return JSONResponse(status_code=200, content={"status": "accepted", "queued": True})
