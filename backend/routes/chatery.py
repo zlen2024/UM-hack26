@@ -171,11 +171,29 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
 
     if event == "message":
         message_data = payload.get("data", {})
-        from_phone = message_data.get("from")
-        text = message_data.get("text")
+        from_phone = message_data.get("senderPhone")
+        contact_name = message_data.get("senderName") or "Chatery Contact"
         
-        logger.info(f"Message received for session {session_id} from {from_phone}")
+        # Extract text based on message type
+        msg_type = message_data.get("type")
+        if msg_type == "text":
+            text = message_data.get("content")
+        else:
+            text = message_data.get("caption")
+            
+        if not text:
+            text = ""
+        
+        logger.info(f"Message received for session {session_id} from {from_phone} ({contact_name})")
         logger.debug(f"Message text: {text}")
+
+        if not from_phone:
+            logger.warning("Message webhook: Missing senderPhone")
+            return {"status": "ok", "message": "Missing senderPhone"}
+
+        if not text.strip():
+            logger.info("Message webhook: Empty text, skipping AI processing")
+            return {"status": "ok", "message": "Empty text"}
 
         session = db.query(ChateryWhatsAppSession).filter(ChateryWhatsAppSession.session_id == session_id).first()
         if not session:
@@ -189,7 +207,7 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
 
         agent_payload = {
             "user_id": user.id,
-            "contact_name": "Chatery Contact",  # Chatery webhook might not provide contact name in this event
+            "contact_name": contact_name,
             "phone": from_phone,
             "message": text,
         }
