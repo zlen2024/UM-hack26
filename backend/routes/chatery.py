@@ -1,7 +1,7 @@
 import os
 import requests
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from database import get_db
 from models import ChateryWhatsAppSession, User
@@ -30,6 +30,30 @@ def get_chatery_headers():
     if CHATERY_API_KEY:
         headers["X-Api-Key"] = CHATERY_API_KEY
     return headers
+
+def send_chatery_text_message(*, session_id: str, chat_id: str, message: str, typing_time: int = 1500) -> dict:
+    url = f"{CHATERY_API_URL}/chats/send-text"
+    payload = {
+        "sessionId": session_id,
+        "chatId": chat_id,
+        "message": message,
+        "typingTime": typing_time,
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=get_chatery_headers(), timeout=10)
+        data = None
+        try:
+            data = response.json()
+        except Exception:
+            data = None
+
+        if response.status_code >= 400:
+            return {"success": False, "status_code": response.status_code, "error": response.text, "response": data}
+
+        return {"success": True, "status_code": response.status_code, "error": None, "response": data}
+    except Exception as e:
+        return {"success": False, "status_code": None, "error": str(e), "response": None}
 
 class ConnectRequest(BaseModel):
     user_id: int
@@ -82,6 +106,59 @@ def resolve_lid_to_phone(session_id: str, lid: str) -> str:
         logger.error(f"Exception resolving LID {lid}: {str(e)}")
         
     return lid
+
+def process_chatery_message_and_reply(
+    *,
+    user_id: int,
+    session_id: str,
+    sender_full_id: str,
+    from_phone: str,
+    contact_name: str,
+    text: str,
+) -> None:
+    try:
+        resolved_phone = from_phone or ""
+
+        if sender_full_id.endswith("@lid"):
+            resolved_phone = resolve_lid_to_phone(session_id, sender_full_id)
+        elif sender_full_id.endswith("@s.whatsapp.net"):
+            resolved_phone = sender_full_id.split("@")[0]
+        elif resolved_phone.endswith("@s.whatsapp.net"):
+            resolved_phone = resolved_phone.split("@")[0]
+
+        if not resolved_phone:
+            logger.warning(f"Chatery background task: missing resolved phone for session {session_id}")
+            return
+
+        agent_payload = {
+            "user_id": user_id,
+            "contact_name": contact_name,
+            "phone": resolved_phone,
+            "message": text,
+        }
+
+        from agents.cs_agent import process_whatsapp_message
+
+        result = process_whatsapp_message(agent_payload)
+        response_text = result.get("response", "")
+
+        if not response_text:
+            return
+
+        logger.info(f"Sending automated reply to {resolved_phone} for session {session_id}")
+        send_result = send_chatery_text_message(
+            session_id=session_id,
+            chat_id=resolved_phone,
+            message=response_text,
+            typing_time=1500,
+        )
+
+        if send_result.get("success"):
+            logger.info(f"Successfully sent automated reply to {resolved_phone}")
+        else:
+            logger.error(f"Error sending automated reply via Chatery: {send_result.get('error')}")
+    except Exception as e:
+        logger.error(f"Chatery background task error: {e}")
 
 @router.post("/connect")
 def connect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
@@ -186,7 +263,7 @@ def disconnect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
     return {"success": True, "message": "Session disconnected"}
 
 @router.post("/webhook")
-async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
+async def chatery_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     logger.info("Received Chatery webhook request")
     try:
         payload = await request.json()
@@ -227,10 +304,7 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
         from_phone = message_data.get("senderPhone") or message_data.get("from")
         contact_name = message_data.get("senderName") or message_data.get("name") or "Chatery Contact"
         
-        # Resolve LID or format JID
-        if sender_full_id.endswith("@lid"):
-            from_phone = resolve_lid_to_phone(session_id, sender_full_id)
-        elif sender_full_id.endswith("@s.whatsapp.net"):
+        if sender_full_id.endswith("@s.whatsapp.net"):
             from_phone = sender_full_id.split("@")[0]
         elif from_phone and from_phone.endswith("@s.whatsapp.net"):
             from_phone = from_phone.split("@")[0]
@@ -253,7 +327,7 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
         logger.info(f"Message received for session {session_id} from {from_phone} ({contact_name})")
         logger.debug(f"Message text: {text}")
 
-        if not from_phone:
+        if not from_phone and not sender_full_id:
             logger.warning("Message webhook: Missing senderPhone")
             return {"status": "ok", "message": "Missing senderPhone"}
 
@@ -271,37 +345,17 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
             logger.warning(f"Message webhook: User {session.user_id} not found for session {session_id}")
             return {"status": "ok", "message": "User not found"}
 
-        agent_payload = {
-            "user_id": user.id,
-            "contact_name": contact_name,
-            "phone": from_phone,
-            "message": text,
-        }
+        background_tasks.add_task(
+            process_chatery_message_and_reply,
+            user_id=user.id,
+            session_id=session_id,
+            sender_full_id=sender_full_id,
+            from_phone=from_phone or "",
+            contact_name=contact_name,
+            text=text,
+        )
 
-        logger.info(f"Processing message via cs_agent for user {user.id}")
-        logger.info(f"Agent payload being sent: {json.dumps(agent_payload)}")
-        from agents.cs_agent import process_whatsapp_message
-        result = process_whatsapp_message(agent_payload)
-        logger.info(f"Agent result received: {json.dumps(result)}")
-        response_text = result.get("response", "")
-
-        if response_text:
-            logger.info(f"Sending automated reply to {from_phone} for session {session_id}")
-            url = f"{CHATERY_API_URL}/chats/send-text"
-            send_payload = {
-                "sessionId": session_id,
-                "chatId": from_phone if from_phone else "",
-                "message": response_text,
-                "typingTime": 1500  # Make it look natural
-            }
-
-            try:
-                requests.post(url, json=send_payload, headers=get_chatery_headers())
-                logger.info(f"Successfully sent automated reply to {from_phone}")
-            except Exception as e:
-                logger.error(f"Error sending automated reply via Chatery: {e}")
-
-        return {"status": "processed", "result": result}
+        return {"status": "accepted"}
 
     if event == "message.sent":
         message_data = payload.get("data", {})

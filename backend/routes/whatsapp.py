@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -176,6 +176,40 @@ def send_whatsapp_message(phone_number_id: str, access_token: str, recipient: st
     
     return {"success": True, "response": result}
 
+def process_whatsapp_update_and_reply(
+    *,
+    user_id: int,
+    contact_name: str,
+    recipient: str,
+    message_text: str,
+    phone_number_id: str,
+    access_token: str,
+) -> None:
+    try:
+        from agents.cs_agent import process_whatsapp_message
+
+        message_data = {
+            "user_id": user_id,
+            "contact_name": contact_name,
+            "phone": recipient,
+            "message": message_text,
+        }
+
+        result = process_whatsapp_message(message_data)
+        response_text = result.get("response", "")
+
+        if not response_text:
+            return
+
+        send_whatsapp_message(
+            phone_number_id=phone_number_id,
+            access_token=access_token,
+            recipient=recipient,
+            message=response_text,
+        )
+    except Exception as e:
+        print(f"[WhatsApp] Background task error: {e}")
+
 
 @router.get("/webhook")
 def verify_webhook(
@@ -199,7 +233,7 @@ def verify_webhook(
 
 
 @router.post("/webhook")
-async def receive_webhook(request: Request, db: Session = Depends(get_db)):
+async def receive_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Handle incoming WhatsApp webhook POST from Meta.
     
@@ -290,32 +324,17 @@ async def receive_webhook(request: Request, db: Session = Depends(get_db)):
         print(f"[WhatsApp] User not found for id: {whatsapp_config.user_id}")
         return JSONResponse(status_code=200, content={"status": "ok", "reason": "user_not_found"})
 
-    message_data = {
-        "user_id": user.id,
-        "contact_name": contact["name"],
-        "phone": message["from"],
-        "message": message["text_body"],
-    }
+    background_tasks.add_task(
+        process_whatsapp_update_and_reply,
+        user_id=user.id,
+        contact_name=contact["name"],
+        recipient=message["from"],
+        message_text=message["text_body"],
+        phone_number_id=whatsapp_config.phone_number_id,
+        access_token=whatsapp_config.access_token,
+    )
 
-    from agents.cs_agent import process_whatsapp_message
-
-    result = process_whatsapp_message(message_data)
-
-    response_text = result.get("response", "")
-    print(f"[WhatsApp] Response to send: {response_text}")
-    
-    if response_text:
-        print(f"[WhatsApp] Sending reply to {message['from']}: {response_text}")
-        send_result = send_whatsapp_message(
-            phone_number_id=whatsapp_config.phone_number_id,
-            access_token=whatsapp_config.access_token,
-            recipient=message["from"],
-            message=response_text
-        )
-        result["sent"] = send_result
-
-    # Meta requires HTTP 200 for successfully processed webhooks
-    return JSONResponse(status_code=200, content={"status": "processed", "result": result})
+    return JSONResponse(status_code=200, content={"status": "accepted", "queued": True})
 
 
 @router.post("/config")
