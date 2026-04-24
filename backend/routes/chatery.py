@@ -172,8 +172,8 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
     if event == "message":
         message_data = payload.get("data", {})
         message_id = message_data.get("id")
-        from_phone = message_data.get("from")
-        contact_name = message_data.get("id") 
+        from_phone = message_data.get("senderPhone") or message_data.get("from")
+        contact_name = message_data.get("senderName") or message_data.get("name") or "Chatery Contact"
         
         # Extract text based on message type
         msg_type = message_data.get("type")
