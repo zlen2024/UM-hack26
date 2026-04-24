@@ -220,15 +220,20 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
     if event == "message":
         message_data = payload.get("data", {})
         message_id = message_data.get("id")
+        
+        # Determine the full ID including @lid or @s.whatsapp.net
+        sender_full_id = message_data.get("sender") or message_data.get("chatId") or ""
+        
         from_phone = message_data.get("senderPhone") or message_data.get("from")
         contact_name = message_data.get("senderName") or message_data.get("name") or "Chatery Contact"
         
         # Resolve LID or format JID
-        if from_phone:
-            if from_phone.endswith("@s.whatsapp.net"):
-                from_phone = from_phone.split("@")[0]
-            elif from_phone.endswith("@lid"):
-                from_phone = resolve_lid_to_phone(session_id, from_phone)
+        if sender_full_id.endswith("@lid"):
+            from_phone = resolve_lid_to_phone(session_id, sender_full_id)
+        elif sender_full_id.endswith("@s.whatsapp.net"):
+            from_phone = sender_full_id.split("@")[0]
+        elif from_phone and from_phone.endswith("@s.whatsapp.net"):
+            from_phone = from_phone.split("@")[0]
         
         # Prevent bot from replying to its own messages
         if message_data.get("fromMe"):
