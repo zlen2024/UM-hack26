@@ -50,37 +50,33 @@ GATEKEEPER_SCHEMA = {
     "additionalProperties": False
 }
 
-MANAGER_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "task": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "args": {"type": "object"}
-                },
-                "required": ["name", "args"],
-                "additionalProperties": False
-            }
-        },
-        "response": {"type": "string"},
-        "knowledge": {"type": "boolean"}
-    },
-    "required": ["task", "response", "knowledge"],
-    "additionalProperties": False
-}
-
 class AgentState(TypedDict, total=False):
     user_input: str
     user_id: int
     contact_name: str
     gatekeeper_response: dict
-    manager_response: dict
-    current_tasks: List[dict]
+    messages: List[dict]
     worker_error: str
-    task_results: List[str]
+
+def format_tool_to_openai(tool) -> dict:
+    if hasattr(tool, "args_schema") and tool.args_schema:
+        if hasattr(tool.args_schema, "model_json_schema"):
+            parameters = tool.args_schema.model_json_schema()
+        else:
+            parameters = tool.args_schema.schema()
+    else:
+        parameters = {"type": "object", "properties": {}}
+        
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": parameters
+        }
+    }
+
+openai_tools = [format_tool_to_openai(t) for t in CRM_TOOLS]
 
 def gatekeeper_node(state: AgentState) -> dict:
     logger.info("--- [NODE: GATEKEEPER] Executing ---")
@@ -148,8 +144,6 @@ def manager_node(state: AgentState) -> dict:
     logger.info("--- [NODE: MANAGER] Executing ---")
     client = get_ilmu_client()
     
-    tools_description = "\n".join([f"- {t.name}: {t.description}" for t in CRM_TOOLS])
-    
     system_prompt = f"""You are the Master Workflow Planner for a customer service business. You receive queries or system errors and must determine the exact sequence of tasks needed to resolve them. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
     
     CRITICAL INSTRUCTIONS FOR USING TOOLS:
@@ -158,76 +152,76 @@ def manager_node(state: AgentState) -> dict:
     3. **Interaction Logging**: Always use `create_activity` to log the support interaction after resolving the customer's request. Associate it with `contact_id` if known.
 
 RULES:
-1. Output MUST be strictly valid JSON matching the schema: {{"task": [{{"name": "string", "args": {{}}}}], "response": "string", "knowledge": boolean}}.
-2. If the query requires checking company policy, FAQs, or general information, set "knowledge" to true, and "task" MUST be empty [].
-3. If the query requires executing actions, list the specific tools/steps in the "task" array. "knowledge" MUST be false. Available tasks:
-{tools_description}
-4. If you lack information from the user to proceed, OR if you receive an error from a previous task, set "task" to [], "knowledge" to false, and use "response" to ask the user for clarification or inform them of the issue.
-5. If previous tasks were successful (check Task Results), provide the final "response" summarizing the outcome to the user and set "task" to [] and "knowledge" to false."""
+1. If the query requires checking company policy, FAQs, or general information, or if you lack information from the user, respond directly to the user.
+2. If the query requires executing actions, use the provided tools.
+3. If previous tools were successful, provide the final response summarizing the outcome to the user."""
 
-    gatekeeper_resp = state.get("gatekeeper_response", {})
-    query = gatekeeper_resp.get("query", state.get("user_input", ""))
-    worker_error = state.get("worker_error", "")
-    current_tasks = state.get("current_tasks", [])
-    task_results = state.get("task_results", [])
+    messages = state.get("messages", [])
+    if not messages:
+        gatekeeper_resp = state.get("gatekeeper_response", {})
+        query = gatekeeper_resp.get("query", state.get("user_input", ""))
+        messages = [{"role": "user", "content": query}]
 
-    user_content = f"Query: {query}\nPrevious Tasks: {current_tasks}\nTask Results: {task_results}\nWorker Error: {worker_error}"
-    logger.info(f"Manager Input Context -> Query: '{query}', Prev Tasks: {len(current_tasks)}, Has Error: {bool(worker_error)}")
+    api_messages = [{"role": "system", "content": system_prompt}] + messages
+    logger.info(f"Manager Input Context -> Query: '{messages[0].get('content')}', Prev Messages: {len(messages)}")
 
     try:
         response = client.chat.completions.create(
             model="ilmu-glm-5.1",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
+            messages=api_messages,
+            tools=openai_tools,
             temperature=0,
             max_tokens=2000,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "manager_response",
-                    "strict": True,
-                    "schema": MANAGER_SCHEMA
-                }
-            }
         )
-        content = response.choices[0].message.content
-        logger.debug(f"[Manager] Raw LLM Output: {content}")
-        result = parse_llm_json(content)
-        tasks_planned = result.get("task", [])
-        logger.info(f"[Manager] Parsed Result: knowledge={result.get('knowledge')}, tasks planned={len(tasks_planned)}")
+        msg = response.choices[0].message
+        
+        msg_dict = {"role": "assistant"}
+        if msg.content is not None:
+            msg_dict["content"] = msg.content
+        if msg.tool_calls:
+            msg_dict["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    }
+                } for tc in msg.tool_calls
+            ]
+        
+        logger.info(f"[Manager] Output Tool Calls: {len(msg_dict.get('tool_calls', []))}")
+        return {
+            "messages": messages + [msg_dict],
+            "worker_error": ""
+        }
     except Exception as e:
         logger.error(f"[Manager] Error: {e}", exc_info=True)
-        # Fallback response
-        result = {
-            "task": [],
-            "response": "I'm sorry, I'm having trouble planning the tasks to resolve your query.",
-            "knowledge": False
+        fallback = {"role": "assistant", "content": "I'm sorry, I'm having trouble planning the tasks to resolve your query."}
+        return {
+            "messages": messages + [fallback],
+            "worker_error": str(e)
         }
-
-    return {
-        "manager_response": result,
-        "current_tasks": result.get("task", []),
-        "worker_error": ""
-    }
 
 def worker_node(state: AgentState) -> dict:
     logger.info("--- [NODE: WORKER] Executing ---")
-    tasks = state.get("current_tasks", [])
-    logger.info(f"Worker received {len(tasks)} tasks to execute.")
+    messages = state.get("messages", [])
+    if not messages:
+        return {}
+        
+    last_message = messages[-1]
+    tool_calls = last_message.get("tool_calls", [])
+    logger.info(f"Worker received {len(tool_calls)} tool calls to execute.")
+    
     error = ""
-    task_results = []
-    
     tool_map = {t.name: t for t in CRM_TOOLS}
+    new_messages = []
     
-    for task in tasks:
+    for tc in tool_calls:
         try:
-            if not isinstance(task, dict):
-                raise ValueError(f"Task format invalid, expected dict but got {type(task)}")
-            
-            tool_name = task.get("name")
-            tool_args = task.get("args", {})
+            tool_name = tc["function"]["name"]
+            tool_args_str = tc["function"]["arguments"]
+            tool_args = json.loads(tool_args_str) if tool_args_str else {}
             logger.info(f"Worker executing tool: '{tool_name}' with args: {tool_args}")
             
             if "user_id" not in tool_args and state.get("user_id"):
@@ -240,24 +234,25 @@ def worker_node(state: AgentState) -> dict:
             result = tool.invoke(tool_args)
             logger.debug(f"Tool '{tool_name}' returned: {result}")
             
-            if isinstance(result, str):
-                try:
-                    res_dict = json.loads(result)
-                    if not res_dict.get("success", True):
-                        raise ValueError(f"Tool {tool_name} failed: {res_dict.get('error', 'Unknown error')} - {res_dict.get('message', '')}")
-                    task_results.append(f"Tool {tool_name} success: {result}")
-                except json.JSONDecodeError:
-                    task_results.append(f"Tool {tool_name} output: {result}")
-            else:
-                task_results.append(f"Tool {tool_name} output: {result}")
+            new_messages.append({
+                "tool_call_id": tc["id"],
+                "role": "tool",
+                "name": tool_name,
+                "content": str(result)
+            })
             
         except Exception as e:
             error = str(e)
-            logger.error(f"Worker failed on task '{task.get('name', 'Unknown')}': {error}", exc_info=True)
-            break # Break loop on first failure
+            logger.error(f"Worker failed on tool call '{tc.get('function', {}).get('name', 'Unknown')}': {error}", exc_info=True)
+            new_messages.append({
+                "tool_call_id": tc["id"],
+                "role": "tool",
+                "name": tc.get("function", {}).get("name", "unknown"),
+                "content": f"Error: {error}"
+            })
             
-    logger.info(f"Worker execution finished. Errors: '{error}', Results Count: {len(task_results)}")
-    return {"worker_error": error, "task_results": task_results}
+    logger.info(f"Worker execution finished. Errors: '{error}', Results Count: {len(new_messages)}")
+    return {"messages": messages + new_messages, "worker_error": error}
 
 def gatekeeper_router(state: AgentState) -> str:
     agent_loop = state.get("gatekeeper_response", {}).get("agent_loop", False)
@@ -268,13 +263,17 @@ def gatekeeper_router(state: AgentState) -> str:
     return "manager"
 
 def manager_router(state: AgentState) -> str:
-    response = state.get("manager_response", {}).get("response", "")
-    knowledge = state.get("manager_response", {}).get("knowledge", False)
-    if response != "" or knowledge:
-        logger.info("[ROUTER] Manager -> END (Final response ready or knowledge query)")
+    messages = state.get("messages", [])
+    if not messages:
         return END
-    logger.info("[ROUTER] Manager -> Worker (Tasks need execution)")
-    return "worker"
+        
+    last_message = messages[-1]
+    if last_message.get("tool_calls"):
+        logger.info("[ROUTER] Manager -> Worker (Tasks need execution)")
+        return "worker"
+        
+    logger.info("[ROUTER] Manager -> END (Final response ready)")
+    return END
 
 builder = StateGraph(AgentState)
 builder.add_node("gatekeeper", gatekeeper_node)
@@ -313,7 +312,8 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
         initial_state = {
             "user_input": message,
             "user_id": user_id,
-            "contact_name": contact_name
+            "contact_name": contact_name,
+            "messages": []
         }
         
         final_state = graph.invoke(initial_state)
@@ -322,8 +322,12 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
         if not gatekeeper_resp.get("agent_loop", False):
             ai_response = gatekeeper_resp.get("response", "")
         else:
-            manager_resp = final_state.get("manager_response", {})
-            ai_response = manager_resp.get("response", "")
+            messages = final_state.get("messages", [])
+            if messages:
+                last_message = messages[-1]
+                ai_response = last_message.get("content", "")
+            else:
+                ai_response = "I'm sorry, I'm having trouble processing your request right now."
             
     except Exception as e:
         print(f"[WhatsApp] Error calling LangGraph: {e}")
@@ -358,7 +362,8 @@ def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
         initial_state = {
             "user_input": message,
             "user_id": user_id,
-            "contact_name": contact_name
+            "contact_name": contact_name,
+            "messages": []
         }
         
         final_state = graph.invoke(initial_state)
@@ -367,8 +372,12 @@ def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
         if not gatekeeper_resp.get("agent_loop", False):
             ai_response = gatekeeper_resp.get("response", "")
         else:
-            manager_resp = final_state.get("manager_response", {})
-            ai_response = manager_resp.get("response", "")
+            messages = final_state.get("messages", [])
+            if messages:
+                last_message = messages[-1]
+                ai_response = last_message.get("content", "")
+            else:
+                ai_response = "I'm sorry, I'm having trouble processing your request right now."
             
     except Exception as e:
         print(f"[Telegram] Error calling LangGraph: {e}")
