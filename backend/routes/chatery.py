@@ -175,6 +175,11 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
         from_phone = message_data.get("senderPhone") or message_data.get("from")
         contact_name = message_data.get("senderName") or message_data.get("name") or "Chatery Contact"
         
+        # Prevent bot from replying to its own messages
+        if message_data.get("fromMe"):
+            logger.info("Message is from bot itself (fromMe=True). Ignoring.")
+            return {"status": "ok", "message": "Ignored fromMe message"}
+        
         # Extract text based on message type
         msg_type = message_data.get("type")
         if msg_type == "text":
