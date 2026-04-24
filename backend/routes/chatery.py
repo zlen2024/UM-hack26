@@ -35,6 +35,54 @@ class ConnectRequest(BaseModel):
     user_id: int
     webhook_url: str
 
+# Global cache for LID to Phone Number mapping
+LID_TO_PHONE_CACHE = {}
+
+def resolve_lid_to_phone(session_id: str, lid: str) -> str:
+    """Resolve a WhatsApp LID to a standard phone number using the contacts API."""
+    if lid in LID_TO_PHONE_CACHE:
+        return LID_TO_PHONE_CACHE[lid]
+        
+    url = f"{CHATERY_API_URL}/contacts"
+    payload = {
+        "sessionId": session_id,
+        "limit": 1000,
+        "offset": 0
+    }
+    
+    logger.info(f"Resolving LID {lid} via Chatery contacts API")
+    try:
+        response = requests.post(url, json=payload, headers=get_chatery_headers(), timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            contacts = data.get("contacts", [])
+            
+            # Update cache with all LIDs found in contacts
+            for contact in contacts:
+                c_id = contact.get("id", "")
+                
+                # Different libraries return different fields for the actual phone number
+                c_phone = contact.get("jid") or contact.get("number") or contact.get("phoneNumber") or contact.get("phone")
+                
+                if c_id.endswith("@lid") and c_phone:
+                    c_phone = c_phone.split("@")[0]  # clean up if it's a JID
+                    LID_TO_PHONE_CACHE[c_id] = c_phone
+            
+            # Return the resolved number if found, else original LID
+            if lid in LID_TO_PHONE_CACHE:
+                logger.info(f"Successfully resolved LID {lid} to {LID_TO_PHONE_CACHE[lid]}")
+                return LID_TO_PHONE_CACHE[lid]
+            else:
+                logger.warning(f"LID {lid} not found in contacts list. Falling back to LID.")
+        else:
+            logger.error(f"Failed to fetch contacts for LID resolution: Status {response.status_code}")
+            
+    except Exception as e:
+        logger.error(f"Exception resolving LID {lid}: {str(e)}")
+        
+    return lid
+
 @router.post("/connect")
 def connect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
     session_id = str(req.user_id)
@@ -175,6 +223,13 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
         from_phone = message_data.get("senderPhone") or message_data.get("from")
         contact_name = message_data.get("senderName") or message_data.get("name") or "Chatery Contact"
         
+        # Resolve LID or format JID
+        if from_phone:
+            if from_phone.endswith("@s.whatsapp.net"):
+                from_phone = from_phone.split("@")[0]
+            elif from_phone.endswith("@lid"):
+                from_phone = resolve_lid_to_phone(session_id, from_phone)
+        
         # Prevent bot from replying to its own messages
         if message_data.get("fromMe"):
             logger.info("Message is from bot itself (fromMe=True). Ignoring.")
@@ -230,7 +285,7 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
             url = f"{CHATERY_API_URL}/chats/send-text"
             send_payload = {
                 "sessionId": session_id,
-                "chatId": from_phone.replace('@s.whatsapp.net', '') if from_phone else "",
+                "chatId": from_phone if from_phone else "",
                 "message": response_text,
                 "typingTime": 1500  # Make it look natural
             }
