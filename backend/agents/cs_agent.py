@@ -1,9 +1,14 @@
 import os
 import json
+import logging
 from typing import Dict, Any, Optional, TypedDict, List
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
 from .graph.tools import CRM_TOOLS
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("CS_Agent_Workflow")
 
 def get_ilmu_client():
     api_key = os.getenv("ILMU_API_KEY", "")
@@ -25,6 +30,9 @@ class AgentState(TypedDict, total=False):
     task_results: List[str]
 
 def gatekeeper_node(state: AgentState) -> dict:
+    logger.info("--- [NODE: GATEKEEPER] Executing ---")
+    logger.info(f"Input State User Input: '{state.get('user_input', '')}'")
+    
     client = get_ilmu_client()
     system_prompt = f"""You are a highly efficient Customer Service Intent Router for a business. Your ONLY job is to analyze the user's input, determine if it requires complex backend processing, and route it accordingly. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
 
@@ -44,9 +52,11 @@ RULES:
             response_format={"type": "json_object"}
         )
         content = response.choices[0].message.content
+        logger.debug(f"[Gatekeeper] Raw LLM Output: {content}")
         result = json.loads(content)
+        logger.info(f"[Gatekeeper] Parsed Result: agent_loop={result.get('agent_loop')}, query='{result.get('query')}'")
     except Exception as e:
-        print(f"[Gatekeeper] Error: {e}")
+        logger.error(f"[Gatekeeper] Error: {e}", exc_info=True)
         # Fallback to direct response if API fails or parsing fails
         result = {
             "response": "I'm sorry, I'm having trouble processing your request right now.",
@@ -57,6 +67,7 @@ RULES:
     return {"gatekeeper_response": result}
 
 def manager_node(state: AgentState) -> dict:
+    logger.info("--- [NODE: MANAGER] Executing ---")
     client = get_ilmu_client()
     
     tools_description = "\n".join([f"- {t.name}: {t.description}" for t in CRM_TOOLS])
@@ -78,6 +89,7 @@ RULES:
     task_results = state.get("task_results", [])
 
     user_content = f"Query: {query}\nPrevious Tasks: {current_tasks}\nTask Results: {task_results}\nWorker Error: {worker_error}"
+    logger.info(f"Manager Input Context -> Query: '{query}', Prev Tasks: {len(current_tasks)}, Has Error: {bool(worker_error)}")
 
     try:
         response = client.chat.completions.create(
@@ -90,9 +102,12 @@ RULES:
             response_format={"type": "json_object"}
         )
         content = response.choices[0].message.content
+        logger.debug(f"[Manager] Raw LLM Output: {content}")
         result = json.loads(content)
+        tasks_planned = result.get("task", [])
+        logger.info(f"[Manager] Parsed Result: knowledge={result.get('knowledge')}, tasks planned={len(tasks_planned)}")
     except Exception as e:
-        print(f"[Manager] Error: {e}")
+        logger.error(f"[Manager] Error: {e}", exc_info=True)
         # Fallback response
         result = {
             "task": [],
@@ -107,7 +122,9 @@ RULES:
     }
 
 def worker_node(state: AgentState) -> dict:
+    logger.info("--- [NODE: WORKER] Executing ---")
     tasks = state.get("current_tasks", [])
+    logger.info(f"Worker received {len(tasks)} tasks to execute.")
     error = ""
     task_results = []
     
@@ -120,6 +137,7 @@ def worker_node(state: AgentState) -> dict:
             
             tool_name = task.get("name")
             tool_args = task.get("args", {})
+            logger.info(f"Worker executing tool: '{tool_name}' with args: {tool_args}")
             
             if "user_id" not in tool_args and state.get("user_id"):
                 tool_args["user_id"] = state.get("user_id")
@@ -129,6 +147,7 @@ def worker_node(state: AgentState) -> dict:
             
             tool = tool_map[tool_name]
             result = tool.invoke(tool_args)
+            logger.debug(f"Tool '{tool_name}' returned: {result}")
             
             if isinstance(result, str):
                 try:
@@ -143,21 +162,27 @@ def worker_node(state: AgentState) -> dict:
             
         except Exception as e:
             error = str(e)
+            logger.error(f"Worker failed on task '{task.get('name', 'Unknown')}': {error}", exc_info=True)
             break # Break loop on first failure
             
+    logger.info(f"Worker execution finished. Errors: '{error}', Results Count: {len(task_results)}")
     return {"worker_error": error, "task_results": task_results}
 
 def gatekeeper_router(state: AgentState) -> str:
     agent_loop = state.get("gatekeeper_response", {}).get("agent_loop", False)
     if not agent_loop:
+        logger.info("[ROUTER] Gatekeeper -> END (No agent loop required)")
         return END
+    logger.info("[ROUTER] Gatekeeper -> Manager (Agent loop triggered)")
     return "manager"
 
 def manager_router(state: AgentState) -> str:
     response = state.get("manager_response", {}).get("response", "")
     knowledge = state.get("manager_response", {}).get("knowledge", False)
     if response != "" or knowledge:
+        logger.info("[ROUTER] Manager -> END (Final response ready or knowledge query)")
         return END
+    logger.info("[ROUTER] Manager -> Worker (Tasks need execution)")
     return "worker"
 
 builder = StateGraph(AgentState)
