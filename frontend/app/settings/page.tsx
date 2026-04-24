@@ -8,6 +8,7 @@ import { User, Mail, Calendar, CheckCircle2, XCircle, Zap, Cloud, ShieldCheck, M
 export default function SettingsPage() {
   const [chateryConnected, setChateryConnected] = useState(false);
   const [chateryQrCode, setChateryQrCode] = useState<string | null>(null);
+  const [isPollingQr, setIsPollingQr] = useState(false);
   const [showChateryWarning, setShowChateryWarning] = useState(false);
 
   const router = useRouter();
@@ -34,6 +35,29 @@ export default function SettingsPage() {
   const [activeIntegration, setActiveIntegration] = useState<null | string>(null);
   const [integrationFields, setIntegrationFields] = useState<any>({});
   const [whatsappConfig, setWhatsappConfig] = useState<any>(null);
+
+  useEffect(() => {
+    let qrInterval: NodeJS.Timeout;
+    
+    if (isPollingQr && !chateryQrCode && user?.id) {
+      qrInterval = setInterval(async () => {
+        try {
+          const qrRes = await chatery.qr(user.id);
+          if (qrRes.data?.data?.qrCode) {
+            setChateryQrCode(qrRes.data.data.qrCode);
+            setIsPollingQr(false); // Stop polling once we have the QR
+          }
+        } catch (err: any) {
+          // If 400 or 404, it likely means "not ready yet", so we keep polling
+          console.log('Waiting for QR code...', err.response?.data?.detail || err.message);
+        }
+      }, 3000);
+    }
+
+    return () => {
+      if (qrInterval) clearInterval(qrInterval);
+    };
+  }, [isPollingQr, chateryQrCode, user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -340,6 +364,7 @@ export default function SettingsPage() {
       await chatery.disconnect({ user_id: user.id, webhook_url: webhookUrl });
       setChateryConnected(false);
       setChateryQrCode(null);
+      setIsPollingQr(false);
     } catch (error) {
       console.error('Failed to disconnect Chatery', error);
     }
@@ -364,15 +389,8 @@ export default function SettingsPage() {
         if (sessionData?.qrCode) {
           setChateryQrCode(sessionData.qrCode);
         } else {
-          // If no QR code returned, fallback to GET endpoint
-          try {
-            const qrRes = await chatery.qr(user.id);
-            if (qrRes.data?.data?.qrCode) {
-              setChateryQrCode(qrRes.data.data.qrCode);
-            }
-          } catch (err) {
-            console.error('Failed to fetch QR code fallback', err);
-          }
+          // Trigger polling if the QR code isn't immediately returned
+          setIsPollingQr(true);
         }
       }
     } catch (error) {
@@ -602,18 +620,31 @@ export default function SettingsPage() {
       )}
 
       {/* QR Code Modal */}
-      {chateryQrCode && (
+      {(chateryQrCode || isPollingQr) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
           <div className="modal-panel w-full max-w-md p-6 relative animate-fade-up text-center">
-            <button className="absolute top-3 right-3 text-muted" onClick={() => setChateryQrCode(null)}>&times;</button>
+            <button className="absolute top-3 right-3 text-muted" onClick={() => {
+              setChateryQrCode(null);
+              setIsPollingQr(false);
+            }}>&times;</button>
             <h3 className="text-lg font-semibold text-ink mb-2">Scan QR Code</h3>
             <p className="text-sm text-muted mb-4">
               Open WhatsApp on your phone, go to Linked Devices, and scan this QR code.
             </p>
             <div className="flex justify-center mb-4">
-              <img src={chateryQrCode.startsWith('data:') ? chateryQrCode : `data:image/png;base64,${chateryQrCode}`} alt="WhatsApp QR Code" className="w-64 h-64 border rounded" />
+              {chateryQrCode ? (
+                <img src={chateryQrCode.startsWith('data:') ? chateryQrCode : `data:image/png;base64,${chateryQrCode}`} alt="WhatsApp QR Code" className="w-64 h-64 border rounded" />
+              ) : (
+                <div className="w-64 h-64 border rounded flex flex-col items-center justify-center bg-wash">
+                  <div className="text-muted animate-pulse">Generating QR Code...</div>
+                  <div className="text-xs text-muted mt-2">Please wait</div>
+                </div>
+              )}
             </div>
-            <button className="btn-primary w-full" onClick={() => setChateryQrCode(null)}>Close</button>
+            <button className="btn-primary w-full" onClick={() => {
+              setChateryQrCode(null);
+              setIsPollingQr(false);
+            }}>Close</button>
           </div>
         </div>
       )}
