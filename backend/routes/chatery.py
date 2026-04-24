@@ -59,7 +59,7 @@ def connect_chatery(req: ConnectRequest, db: Session = Depends(get_db)):
         "webhooks": [
             {
                 "url": req.webhook_url,
-                "events": ["message", "message_ack"]
+                "events": ["all"]
             }
         ]
     }
@@ -171,8 +171,8 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
 
     if event == "message":
         message_data = payload.get("data", {})
-        from_phone = message_data.get("senderPhone")
-        contact_name = message_data.get("senderName") or "Chatery Contact"
+        from_phone = message_data.get("senderPhone") or message_data.get("from")
+        contact_name = message_data.get("senderName") or message_data.get("name") or "Chatery Contact"
         
         # Extract text based on message type
         msg_type = message_data.get("type")
@@ -232,6 +232,12 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
                 logger.error(f"Error sending automated reply via Chatery: {e}")
 
         return {"status": "processed", "result": result}
+
+    if event == "message.sent":
+        message_data = payload.get("data", {})
+        to_phone = message_data.get("to") or message_data.get("chatId")
+        logger.info(f"Message sent confirmation received for session {session_id} to {to_phone}")
+        return {"status": "ok", "message": "Message sent confirmation"}
 
     logger.info(f"Unhandled webhook event: {event}")
     return {"status": "ok", "message": "Unhandled event"}
