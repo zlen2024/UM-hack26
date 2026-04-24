@@ -51,7 +51,24 @@ class AgentState(TypedDict, total=False):
 
 def gatekeeper_node(state: AgentState) -> dict:
     logger.info("--- [NODE: GATEKEEPER] Executing ---")
-    logger.info(f"Input State User Input: '{state.get('user_input', '')}'")
+    user_input = state.get('user_input', '')
+    logger.info(f"Input State User Input: '{user_input}'")
+    
+    # Fast-path for simple greetings to avoid slow LLM calls
+    lower_input = re.sub(r'[^a-z\s]', '', user_input.lower()).strip()
+    greetings = {"hi", "hello", "hey", "hye", "hye again", "greetings", "good morning", "good afternoon", "good evening", "thanks", "thank you", "ok", "okay"}
+    
+    if lower_input in greetings or len(lower_input) < 2:
+        logger.info("[Gatekeeper] Fast-path triggered for simple greeting.")
+        contact_name = state.get('contact_name', '').strip()
+        greeting_name = f" {contact_name}" if contact_name else ""
+        return {
+            "gatekeeper_response": {
+                "response": f"Hello{greeting_name}! How can I help you today?",
+                "agent_loop": False,
+                "query": ""
+            }
+        }
     
     client = get_ilmu_client()
     system_prompt = f"""You are a highly efficient Customer Service Intent Router for a business. Your ONLY job is to analyze the user's input, determine if it requires complex backend processing, and route it accordingly. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
@@ -63,7 +80,7 @@ RULES:
 
     try:
         response = client.chat.completions.create(
-            model="ilmu-glm-5.1",
+            model="ilmu-mini-1.0",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": state.get("user_input", "")},
@@ -113,7 +130,7 @@ RULES:
 
     try:
         response = client.chat.completions.create(
-            model="ilmu-glm-5.1",
+            model="ilmu-mini-1.0",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
