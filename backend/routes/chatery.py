@@ -142,7 +142,7 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
     logger.info("Received Chatery webhook request")
     try:
         payload = await request.json()
-        logger.debug(f"Webhook payload: {json.dumps(payload)}")
+        logger.info(f"Webhook payload: {json.dumps(payload)}")
     except Exception as e:
         logger.error(f"Failed to parse webhook JSON: {e}")
         return {"status": "error", "message": "Invalid JSON"}
@@ -214,8 +214,10 @@ async def chatery_webhook(request: Request, db: Session = Depends(get_db)):
         }
 
         logger.info(f"Processing message via cs_agent for user {user.id}")
+        logger.info(f"Agent payload being sent: {json.dumps(agent_payload)}")
         from agents.cs_agent import process_whatsapp_message
         result = process_whatsapp_message(agent_payload)
+        logger.info(f"Agent result received: {json.dumps(result)}")
         response_text = result.get("response", "")
 
         if response_text:
