@@ -151,6 +151,13 @@ def manager_node(state: AgentState) -> dict:
     tools_description = "\n".join([f"- {t.name}: {t.description}" for t in CRM_TOOLS])
     
     system_prompt = f"""You are the Master Workflow Planner for a customer service business. You receive queries or system errors and must determine the exact sequence of tasks needed to resolve them. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
+    
+    CRITICAL INSTRUCTIONS FOR USING TOOLS:
+    1. **Contact Management**: Use `list_contacts` FIRST to find if a customer exists. ONLY use `create_contact` if `list_contacts` returns no match. Use `update_contact` to modify email/phone details.
+    2. **Opportunities**: Use `create_opportunity` when a customer shows intent to buy. Use `update_opportunity_stage` to move deals (lead -> qualified -> proposal -> won/lost).
+    3. **Tasks**: Use `create_task` to set follow-up reminders with a `due_date`. Use `update_task_status` to mark tasks 'completed'.
+    4. **Activities**: Always use `create_activity` to log the interaction after resolving the customer's request. Associate it with `contact_id` if known.
+    5. **Dashboard**: Use `get_dashboard` to provide high-level metrics (total pipeline value, open tasks) when asked for a summary.
 
 RULES:
 1. Output MUST be strictly valid JSON matching the schema: {{"task": [{{"name": "string", "args": {{}}}}], "response": "string", "knowledge": boolean}}.
