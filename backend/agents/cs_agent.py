@@ -119,6 +119,7 @@ RULES:
                 {"role": "user", "content": state.get("user_input", "")},
             ],
             temperature=0,
+            max_tokens=2000,
             response_format={
                 "type": "json_schema",
                 "json_schema": {
@@ -176,6 +177,7 @@ RULES:
                 {"role": "user", "content": user_content},
             ],
             temperature=0,
+            max_tokens=2000,
             response_format={
                 "type": "json_schema",
                 "json_schema": {
