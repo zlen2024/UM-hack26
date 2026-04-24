@@ -80,7 +80,7 @@ RULES:
 
     try:
         response = client.chat.completions.create(
-            model="ilmu-mini-1.0",
+            model="ilmu-glm-5.1",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": state.get("user_input", "")},
@@ -130,7 +130,7 @@ RULES:
 
     try:
         response = client.chat.completions.create(
-            model="ilmu-mini-1.0",
+            model="ilmu-glm-5.1",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
