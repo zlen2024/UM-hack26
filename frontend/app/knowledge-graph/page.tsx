@@ -244,8 +244,8 @@ export default function KnowledgeGraphPage() {
               linkLabel="type"
               linkDirectionalArrowLength={3.5}
               linkDirectionalArrowRelPos={1}
-              onNodeClick={handleNodeClick}
-              onLinkClick={handleLinkClick}
+              onNodeClick={handleNodeClick as any}
+              onLinkClick={handleLinkClick as any}
               onBackgroundClick={handleBackgroundClick}
               // To enable text on links we would need to draw on canvas but let's keep it simple with default ForceGraph behavior.
             />
