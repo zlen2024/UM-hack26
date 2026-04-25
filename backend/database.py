@@ -1,7 +1,8 @@
-import kuzu
+import ladybug as lb
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+import os
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./crm.db"
 
@@ -20,25 +21,34 @@ def get_db():
     finally:
         db.close()
 
-import os
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-KUZU_DB_PATH = os.path.join(BASE_DIR, "knowledge.lbug")
-kuzu_db = kuzu.Database(KUZU_DB_PATH)
-kuzu_conn = kuzu.Connection(kuzu_db)
+_graph_dbs = {}
+_graph_conns = {}
+
+def get_graph_conn(tenant_id: str):
+    # Sanitize tenant_id
+    tenant_id = str(tenant_id).replace("/", "").replace("\\", "")
+    if tenant_id not in _graph_conns:
+        db_path = os.path.join(BASE_DIR, f"{tenant_id}.lbug")
+        db = lb.Database(db_path)
+        conn = lb.Connection(db)
+        _graph_dbs[tenant_id] = db
+        _graph_conns[tenant_id] = conn
+        
+        # Initialize tables for this tenant
+        try:
+            conn.execute("CREATE NODE TABLE Entity (id STRING, label STRING, properties STRING, PRIMARY KEY (id))")
+        except Exception as e:
+            pass
+
+        try:
+            conn.execute("CREATE REL TABLE RelatedTo (FROM Entity TO Entity, relationship_type STRING, properties STRING)")
+        except Exception as e:
+            pass
+            
+    return _graph_conns[tenant_id]
 
 def init_graph_db():
-    try:
-        kuzu_conn.execute("CREATE NODE TABLE Entity (id STRING, label STRING, properties STRING, PRIMARY KEY (id))")
-    except Exception as e:
-        if "already exists" not in str(e):
-            print(f"Error creating Entity table: {e}")
+    # Deprecated: DBs are now initialized lazily per tenant in get_graph_conn
+    pass
 
-    try:
-        kuzu_conn.execute("CREATE REL TABLE RelatedTo (FROM Entity TO Entity, relationship_type STRING, properties STRING)")
-    except Exception as e:
-        if "already exists" not in str(e):
-            print(f"Error creating RelatedTo table: {e}")
-
-def get_graph_conn():
-    return kuzu_conn

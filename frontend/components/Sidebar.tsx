@@ -1,14 +1,15 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  Users, 
-  Building2, 
-  CheckSquare, 
+import {
+  LayoutDashboard,
+  Users,
+  Building2,
+  CheckSquare,
   BarChart3,
   Settings,
-  LogOut
+  LogOut,
+  Network
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -18,6 +19,7 @@ const navItems = [
   { href: '/opportunities', label: 'Opportunities', icon: Building2 },
   { href: '/tasks', label: 'Tasks', icon: CheckSquare },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
+  { href: '/dashboard/knowledge-graph', label: 'Knowledge Graph', icon: Network },
 ];
 
 export default function Sidebar() {

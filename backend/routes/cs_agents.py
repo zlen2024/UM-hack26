@@ -8,6 +8,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 from database import get_graph_conn
+from .auth import get_current_user
+from models import User
 
 router = APIRouter()
 
@@ -22,6 +24,7 @@ llm = ChatOpenAI(
 # 3.1 State Schema
 class AgentState(TypedDict):
     input_text: str
+    tenant_id: str
     is_useful: bool
     extracted_json: Dict[str, Any]
     cypher_queries: List[str]
@@ -177,9 +180,10 @@ def cypher_generator_node(state: AgentState):
     except Exception as e:
         cypher_queries = []
         logs.append(f"Cypher Generator failed to parse JSON: {e}")
-    
+
     # Execute queries
-    conn = get_graph_conn()
+    tenant_id = state.get("tenant_id", "default")
+    conn = get_graph_conn(tenant_id)
     executed = 0
     for query in cypher_queries:
         try:
@@ -187,7 +191,7 @@ def cypher_generator_node(state: AgentState):
             executed += 1
         except Exception as e:
             logs.append(f"Failed to execute query '{query}': {e}")
-            
+
     logs.append(f"Cypher Generator executed {executed}/{len(cypher_queries)} queries")
     
     return {
@@ -218,9 +222,13 @@ class AnalyzeRequest(BaseModel):
     text: str
 
 @router.post("/analyze")
-async def analyze_cs_text(req: AnalyzeRequest):
+async def analyze_cs_text(
+    req: AnalyzeRequest,
+    current_user: User = Depends(get_current_user)
+):
     initial_state = {
         "input_text": req.text,
+        "tenant_id": str(current_user.id),
         "is_useful": False,
         "extracted_json": {},
         "cypher_queries": [],
@@ -235,8 +243,8 @@ async def analyze_cs_text(req: AnalyzeRequest):
     }
 
 @router.get("/graph")
-async def get_cs_graph():
-    conn = get_graph_conn()
+async def get_cs_graph(current_user: User = Depends(get_current_user)):
+    conn = get_graph_conn(str(current_user.id))
     nodes = []
     edges = []
     
@@ -263,5 +271,25 @@ async def get_cs_graph():
             })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-        
+
     return {"nodes": nodes, "edges": edges}
+
+class NodeEditRequest(BaseModel):
+    label: str
+    properties: Dict[str, Any]
+
+@router.put("/graph/nodes/{node_id}")
+async def edit_node(
+    node_id: str,
+    req: NodeEditRequest,
+    current_user: User = Depends(get_current_user)
+):
+    conn = get_graph_conn(str(current_user.id))
+    try:
+        label_safe = req.label.replace("'", "\\'")
+        props_str = json.dumps(req.properties).replace("'", "\\'")
+        query = f"MATCH (n:Entity {{id: '{node_id}'}}) SET n.label = '{label_safe}', n.properties = '{props_str}' RETURN n"
+        conn.execute(query)
+        return {"status": "success", "node_id": node_id, "label": req.label, "properties": req.properties}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

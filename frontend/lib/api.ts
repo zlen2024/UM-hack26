@@ -87,3 +87,10 @@ export const users = {
   list: () => api.get('/users'),
   get: (id: number) => api.get(`/users/${id}`),
 };
+
+export const cs = {
+  analyze: (text: string) => api.post('/cs/analyze', { text }),
+  getGraph: () => api.get('/cs/graph'),
+  editNode: (nodeId: string, label: string, properties: any) => 
+    api.put(`/cs/graph/nodes/${nodeId}`, { label, properties }),
+};
