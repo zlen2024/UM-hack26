@@ -199,10 +199,11 @@ Response: NO
 
 === TASK ===
 Text: "{text}"
-Respond with ONLY 'YES' or 'NO'."""
+Regardless of the language of the text, you MUST respond with ONLY the English word 'YES' or 'NO'."""
 
     try:
         client = get_ilmu_client()
+        logger.info(f"[KG Evaluator] Sending prompt to model: {prompt}")
         response = client.chat.completions.create(
             model="ilmu-glm-5.1", # Fast model
             messages=[{"role": "user", "content": prompt}],
@@ -210,10 +211,15 @@ Respond with ONLY 'YES' or 'NO'."""
             max_tokens=10,
         )
         content = response.choices[0].message.content
+        logger.info(f"[KG Evaluator] Raw Output: {content}")
+        
         if not content:
             return False
-        content = content.strip().upper()
-        return "YES" in content
+            
+        # Robust parsing: regardless of the language returned, check for 'YES'
+        content_upper = content.strip().upper()
+        # Also check for Malay 'YA' just in case the model ignored instructions
+        return "YES" in content_upper or "YA" in content_upper
     except Exception as e:
         logger.error(f"[KG Evaluator] Error: {e}")
         return False
@@ -238,7 +244,8 @@ You handle user queries, execute necessary backend tasks using tools, and mainta
 1. If the user shares personal details, preferences (likes/dislikes), or business strategies, acknowledge them politely and naturally in your response. (Note: A background Knowledge Graph agent will automatically extract and save this data, so you do NOT need to use any tools to save this specific knowledge).
 2. If the query requires checking policy or general info, respond directly.
 3. If the query requires actions, use the tools. Once successful, provide a final summary to the user.
-4. Always maintain a helpful and professional tone."""
+4. Always maintain a helpful and professional tone.
+5. **Language Rule**: Always respond in the same language the user is speaking. If they use mixed languages (e.g., English and Malay), respond in English by default unless they explicitly request otherwise."""
 
     messages = state.get("messages", [])
     if not messages:
@@ -262,6 +269,7 @@ You handle user queries, execute necessary backend tasks using tools, and mainta
         msg_dict = {"role": "assistant"}
         if msg.content is not None:
             msg_dict["content"] = msg.content
+            logger.info(f"[Manager] Assistant Content Output: {msg.content}")
         if msg.tool_calls:
             msg_dict["tool_calls"] = [
                 {
