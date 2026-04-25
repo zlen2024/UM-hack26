@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from models import Contact, Opportunity, Task, Activity, User
+from knowledge_db import KnowledgeDBFactory
 
 
 def get_db_session():
@@ -140,6 +141,31 @@ class SaveChatMessageInput(BaseModel):
 class GetChatHistoryInput(BaseModel):
     session_id: str = Field(description="The unique session ID for the chat")
     limit: Optional[int] = Field(default=50, description="Maximum number of messages to retrieve")
+
+class QueryKnowledgeGraphInput(BaseModel):
+    query: str = Field(description="Cypher query to execute on the knowledge graph.")
+
+class AddKgNodeInput(BaseModel):
+    node_id: str = Field(description="Unique ID for the node")
+    label: str = Field(description="Label or type of the node")
+    properties: str = Field(default="{}", description="JSON string of properties")
+
+class UpdateKgNodeInput(BaseModel):
+    node_id: str = Field(description="Unique ID for the node")
+    label: str = Field(description="Label or type of the node")
+    properties: str = Field(default="{}", description="JSON string of properties")
+
+class AddKgEdgeInput(BaseModel):
+    source_id: str = Field(description="Source node ID")
+    target_id: str = Field(description="Target node ID")
+    edge_type: str = Field(description="Type of the relationship")
+    properties: str = Field(default="{}", description="JSON string of properties")
+
+class UpdateKgEdgeInput(BaseModel):
+    source_id: str = Field(description="Source node ID")
+    target_id: str = Field(description="Target node ID")
+    edge_type: str = Field(description="Type of the relationship")
+    properties: str = Field(default="{}", description="JSON string of properties")
 
 # ============ Tool Implementations ============
 
@@ -714,6 +740,69 @@ def get_chat_history(session_id: str, limit: int = 50) -> str:
         return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
 
 
+@tool("query_knowledge_graph", args_schema=QueryKnowledgeGraphInput)
+def query_knowledge_graph(query: str) -> str:
+    """Execute a Cypher query on the user's knowledge graph to find nodes and edges."""
+    try:
+        user_id = str(UserContext.get_user_id() or 1)
+        db = KnowledgeDBFactory.get_instance(user_id)
+        results = db.execute_cypher(query)
+        return json.dumps({
+            "success": True,
+            "data": results
+        })
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+
+
+@tool("add_kg_node", args_schema=AddKgNodeInput)
+def add_kg_node(node_id: str, label: str, properties: str = "{}") -> str:
+    """Add a new node to the user's knowledge graph."""
+    try:
+        user_id = str(UserContext.get_user_id() or 1)
+        db = KnowledgeDBFactory.get_instance(user_id)
+        db.add_node(node_id, label, properties)
+        return json.dumps({"success": True, "message": f"Node '{node_id}' added successfully"})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+
+
+@tool("update_kg_node", args_schema=UpdateKgNodeInput)
+def update_kg_node(node_id: str, label: str, properties: str = "{}") -> str:
+    """Update an existing node in the user's knowledge graph."""
+    try:
+        user_id = str(UserContext.get_user_id() or 1)
+        db = KnowledgeDBFactory.get_instance(user_id)
+        db.update_node(node_id, label, properties)
+        return json.dumps({"success": True, "message": f"Node '{node_id}' updated successfully"})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+
+
+@tool("add_kg_edge", args_schema=AddKgEdgeInput)
+def add_kg_edge(source_id: str, target_id: str, edge_type: str, properties: str = "{}") -> str:
+    """Add a new edge/relationship between nodes in the user's knowledge graph."""
+    try:
+        user_id = str(UserContext.get_user_id() or 1)
+        db = KnowledgeDBFactory.get_instance(user_id)
+        db.add_edge(source_id, target_id, edge_type, properties)
+        return json.dumps({"success": True, "message": f"Edge from '{source_id}' to '{target_id}' of type '{edge_type}' added successfully"})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+
+
+@tool("update_kg_edge", args_schema=UpdateKgEdgeInput)
+def update_kg_edge(source_id: str, target_id: str, edge_type: str, properties: str = "{}") -> str:
+    """Update an existing edge/relationship in the user's knowledge graph."""
+    try:
+        user_id = str(UserContext.get_user_id() or 1)
+        db = KnowledgeDBFactory.get_instance(user_id)
+        db.update_edge(source_id, target_id, edge_type, properties)
+        return json.dumps({"success": True, "message": f"Edge from '{source_id}' to '{target_id}' of type '{edge_type}' updated successfully"})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+
+
 # ============ Export All Tools ============
 
 CRM_TOOLS = [
@@ -734,4 +823,9 @@ CRM_TOOLS = [
     get_dashboard,
     save_chat_message,
     get_chat_history,
+    query_knowledge_graph,
+    add_kg_node,
+    update_kg_node,
+    add_kg_edge,
+    update_kg_edge,
 ]

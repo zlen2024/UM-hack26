@@ -9,7 +9,7 @@ from models import User
 from auth import get_current_user
 from agents.cs_agent import graph
 from agents.memory import save_message, get_history
-from knowledge_db import knowledge_db
+from knowledge_db import KnowledgeDBFactory
 
 logger = logging.getLogger("KG_Routes")
 router = APIRouter()
@@ -22,6 +22,17 @@ class ChatResponse(BaseModel):
     response: str
     kg_extracted: bool = False
     kg_queries: list = []
+
+class NodeRequest(BaseModel):
+    id: str
+    label: str
+    properties: str
+
+class EdgeRequest(BaseModel):
+    source: str
+    target: str
+    type: str
+    properties: str
 
 @router.post("/chat", response_model=ChatResponse)
 def test_chat_endpoint(
@@ -87,8 +98,69 @@ def test_chat_endpoint(
 @router.get("/graph")
 def get_graph_data(current_user: User = Depends(get_current_user)):
     try:
-        data = knowledge_db.get_all_graph_data()
+        user_db = KnowledgeDBFactory.get_instance(current_user.id)
+        data = user_db.get_all_graph_data()
         return data
     except Exception as e:
         logger.error(f"[KG Graph Endpoint] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/node")
+def add_node(req: NodeRequest, current_user: User = Depends(get_current_user)):
+    try:
+        user_db = KnowledgeDBFactory.get_instance(current_user.id)
+        user_db.add_node(req.id, req.label, req.properties)
+        return {"status": "success", "message": "Node added"}
+    except Exception as e:
+        logger.error(f"[KG Add Node] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/node")
+def update_node(req: NodeRequest, current_user: User = Depends(get_current_user)):
+    try:
+        user_db = KnowledgeDBFactory.get_instance(current_user.id)
+        user_db.update_node(req.id, req.label, req.properties)
+        return {"status": "success", "message": "Node updated"}
+    except Exception as e:
+        logger.error(f"[KG Update Node] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/node/{node_id}")
+def delete_node(node_id: str, current_user: User = Depends(get_current_user)):
+    try:
+        user_db = KnowledgeDBFactory.get_instance(current_user.id)
+        user_db.delete_node(node_id)
+        return {"status": "success", "message": "Node deleted"}
+    except Exception as e:
+        logger.error(f"[KG Delete Node] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/edge")
+def add_edge(req: EdgeRequest, current_user: User = Depends(get_current_user)):
+    try:
+        user_db = KnowledgeDBFactory.get_instance(current_user.id)
+        user_db.add_edge(req.source, req.target, req.type, req.properties)
+        return {"status": "success", "message": "Edge added"}
+    except Exception as e:
+        logger.error(f"[KG Add Edge] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/edge")
+def update_edge(req: EdgeRequest, current_user: User = Depends(get_current_user)):
+    try:
+        user_db = KnowledgeDBFactory.get_instance(current_user.id)
+        user_db.update_edge(req.source, req.target, req.type, req.properties)
+        return {"status": "success", "message": "Edge updated"}
+    except Exception as e:
+        logger.error(f"[KG Update Edge] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/edge")
+def delete_edge(source: str, target: str, type: str, current_user: User = Depends(get_current_user)):
+    try:
+        user_db = KnowledgeDBFactory.get_instance(current_user.id)
+        user_db.delete_edge(source, target, type)
+        return {"status": "success", "message": "Edge deleted"}
+    except Exception as e:
+        logger.error(f"[KG Delete Edge] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

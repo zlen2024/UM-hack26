@@ -13,7 +13,8 @@ import {
   Settings,
   LogOut,
   Mail,
-  BookOpen
+  BookOpen,
+  Network
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -26,6 +27,7 @@ const navItems = [
   { href: '/emails', label: 'Emails', icon: Mail },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/business', label: 'Business Background', icon: BookOpen },
+  { href: '/knowledge-graph', label: 'Knowledge Graph', icon: Network },
 ];
 
 export default function Sidebar() {

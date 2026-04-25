@@ -1,6 +1,6 @@
 import json
 import os
-from knowledge_db import knowledge_db
+from knowledge_db import KnowledgeDBFactory
 
 def _get_openai_client():
     from openai import OpenAI
@@ -102,11 +102,14 @@ Output ONLY valid JSON containing the "queries" list, with no markdown formattin
         print(f"Cypher generation error: {e}")
         queries = []
         
+    user_id = state.get("user_id", "default")
+    user_db = KnowledgeDBFactory.get_instance(user_id)
+    
     # Execute the queries
     executed_queries = []
     for query in queries:
         try:
-            knowledge_db.execute_cypher(query)
+            user_db.execute_cypher(query)
             executed_queries.append({"query": query, "status": "success"})
         except Exception as e:
             print(f"Cypher execution error: {e} for query: {query}")

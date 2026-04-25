@@ -174,3 +174,15 @@ export const businessBackground = {
   update: (id: number, data: any) => api.put(`/business-background/${id}`, data),
   delete: (id: number) => api.delete(`/business-background/${id}`),
 };
+
+export const kg = {
+  getGraph: () => api.get('/graph'),
+  addNode: (data: { id: string; label: string; properties: string }) => api.post('/node', data),
+  updateNode: (data: { id: string; label: string; properties: string }) => api.put('/node', data),
+  deleteNode: (id: string) => api.delete(`/node/${id}`),
+  addEdge: (data: { source: string; target: string; type: string; properties: string }) => api.post('/edge', data),
+  updateEdge: (data: { source: string; target: string; type: string; properties: string }) => api.put('/edge', data),
+  deleteEdge: (source: string, target: string, type: string) => 
+    api.delete('/edge', { params: { source, target, type } }),
+};
+
