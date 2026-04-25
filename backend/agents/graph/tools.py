@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime, date
 from decimal import Decimal
 from pydantic import BaseModel, Field
@@ -148,24 +148,24 @@ class QueryKnowledgeGraphInput(BaseModel):
 class AddKgNodeInput(BaseModel):
     node_id: str = Field(description="Unique ID for the node")
     label: str = Field(description="Label or type of the node")
-    properties: str = Field(default="{}", description="JSON string of properties")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
 
 class UpdateKgNodeInput(BaseModel):
     node_id: str = Field(description="Unique ID for the node")
     label: str = Field(description="Label or type of the node")
-    properties: str = Field(default="{}", description="JSON string of properties")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
 
 class AddKgEdgeInput(BaseModel):
     source_id: str = Field(description="Source node ID")
     target_id: str = Field(description="Target node ID")
     edge_type: str = Field(description="Type of the relationship")
-    properties: str = Field(default="{}", description="JSON string of properties")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
 
 class UpdateKgEdgeInput(BaseModel):
     source_id: str = Field(description="Source node ID")
     target_id: str = Field(description="Target node ID")
     edge_type: str = Field(description="Type of the relationship")
-    properties: str = Field(default="{}", description="JSON string of properties")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
 
 # ============ Tool Implementations ============
 
@@ -756,48 +756,52 @@ def query_knowledge_graph(query: str) -> str:
 
 
 @tool("add_kg_node", args_schema=AddKgNodeInput)
-def add_kg_node(node_id: str, label: str, properties: str = "{}") -> str:
+def add_kg_node(node_id: str, label: str, properties: Dict[str, Any] = None) -> str:
     """Add a new node to the user's knowledge graph."""
+    if properties is None: properties = {}
     try:
         user_id = str(UserContext.get_user_id() or 1)
         db = KnowledgeDBFactory.get_instance(user_id)
-        db.add_node(node_id, label, properties)
+        db.add_node(node_id, label, json.dumps(properties))
         return json.dumps({"success": True, "message": f"Node '{node_id}' added successfully"})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
 
 
 @tool("update_kg_node", args_schema=UpdateKgNodeInput)
-def update_kg_node(node_id: str, label: str, properties: str = "{}") -> str:
+def update_kg_node(node_id: str, label: str, properties: Dict[str, Any] = None) -> str:
     """Update an existing node in the user's knowledge graph."""
+    if properties is None: properties = {}
     try:
         user_id = str(UserContext.get_user_id() or 1)
         db = KnowledgeDBFactory.get_instance(user_id)
-        db.update_node(node_id, label, properties)
+        db.update_node(node_id, label, json.dumps(properties))
         return json.dumps({"success": True, "message": f"Node '{node_id}' updated successfully"})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
 
 
 @tool("add_kg_edge", args_schema=AddKgEdgeInput)
-def add_kg_edge(source_id: str, target_id: str, edge_type: str, properties: str = "{}") -> str:
+def add_kg_edge(source_id: str, target_id: str, edge_type: str, properties: Dict[str, Any] = None) -> str:
     """Add a new edge/relationship between nodes in the user's knowledge graph."""
+    if properties is None: properties = {}
     try:
         user_id = str(UserContext.get_user_id() or 1)
         db = KnowledgeDBFactory.get_instance(user_id)
-        db.add_edge(source_id, target_id, edge_type, properties)
+        db.add_edge(source_id, target_id, edge_type, json.dumps(properties))
         return json.dumps({"success": True, "message": f"Edge from '{source_id}' to '{target_id}' of type '{edge_type}' added successfully"})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
 
 
 @tool("update_kg_edge", args_schema=UpdateKgEdgeInput)
-def update_kg_edge(source_id: str, target_id: str, edge_type: str, properties: str = "{}") -> str:
+def update_kg_edge(source_id: str, target_id: str, edge_type: str, properties: Dict[str, Any] = None) -> str:
     """Update an existing edge/relationship in the user's knowledge graph."""
+    if properties is None: properties = {}
     try:
         user_id = str(UserContext.get_user_id() or 1)
         db = KnowledgeDBFactory.get_instance(user_id)
-        db.update_edge(source_id, target_id, edge_type, properties)
+        db.update_edge(source_id, target_id, edge_type, json.dumps(properties))
         return json.dumps({"success": True, "message": f"Edge from '{source_id}' to '{target_id}' of type '{edge_type}' updated successfully"})
     except Exception as e:
         return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})

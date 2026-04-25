@@ -7,7 +7,9 @@ class KnowledgeDB:
             db_path = os.getenv("KNOWLEDGE_DB_PATH", "knowledge.lbug")
         
         # Ensure directory exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        dir_name = os.path.dirname(db_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         
         self.db = lb.Database(db_path)
         self.conn = lb.Connection(self.db)
@@ -99,9 +101,10 @@ class KnowledgeDBFactory:
     _instances = {}
 
     @classmethod
-    def get_instance(cls, user_id: str) -> KnowledgeDB:
-        if user_id not in cls._instances:
+    def get_instance(cls, user_id) -> KnowledgeDB:
+        user_id_str = str(user_id)
+        if user_id_str not in cls._instances:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            db_path = os.path.join(base_dir, "data", "lbug", f"{user_id}.lbug")
-            cls._instances[user_id] = KnowledgeDB(db_path)
-        return cls._instances[user_id]
+            db_path = os.path.join(base_dir, "data", "lbug", f"{user_id_str}.lbug")
+            cls._instances[user_id_str] = KnowledgeDB(db_path)
+        return cls._instances[user_id_str]

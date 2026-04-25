@@ -85,7 +85,8 @@ def information_extractor_node(state: dict) -> dict:
         )
         
         content = response.choices[0].message.content
-        extracted_data = json.loads(content)
+        from .cs_agent import parse_llm_json
+        extracted_data = parse_llm_json(content)
     except Exception as e:
         print(f"Extraction error: {e}")
         extracted_data = {"nodes": [], "edges": []}
@@ -151,7 +152,8 @@ def cypher_generator_node(state: dict) -> dict:
         )
         
         content = response.choices[0].message.content
-        query_data = json.loads(content)
+        from .cs_agent import parse_llm_json
+        query_data = parse_llm_json(content)
         queries = query_data.get("queries", [])
     except Exception as e:
         print(f"Cypher generation error: {e}")
