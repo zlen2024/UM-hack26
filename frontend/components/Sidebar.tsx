@@ -12,7 +12,8 @@ import {
   Bot,
   Settings,
   LogOut,
-  Mail
+  Mail,
+  BookOpen
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -24,6 +25,7 @@ const navItems = [
   { href: '/calendar', label: 'Calendar', icon: Calendar },
   { href: '/emails', label: 'Emails', icon: Mail },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
+  { href: '/business', label: 'Business Background', icon: BookOpen },
 ];
 
 export default function Sidebar() {

@@ -195,7 +195,15 @@ def process_whatsapp_update_and_reply(
             "message": message_text,
         }
 
-        result = process_whatsapp_message(message_data)
+        def send_immediate_reply(text: str):
+            send_whatsapp_message(
+                phone_number_id=phone_number_id,
+                access_token=access_token,
+                recipient=recipient,
+                message=text,
+            )
+
+        result = process_whatsapp_message(message_data, send_callback=send_immediate_reply)
         response_text = result.get("response", "")
 
         if not response_text:

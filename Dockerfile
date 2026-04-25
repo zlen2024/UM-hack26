@@ -30,13 +30,14 @@ RUN cd frontend && npm run build
 # Create start script
 RUN echo '#!/bin/bash\n\
 cd /app/backend\n\
-uvicorn main:app --host 127.0.0.1 --port 8000 &\n\
+uvicorn main:app --host 0.0.0.0 --port 8000 &\n\
 cd /app/frontend\n\
 exec npm start\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
 # Expose port and start
 EXPOSE 3000
+EXPOSE 8000
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 CMD ["/app/start.sh"]

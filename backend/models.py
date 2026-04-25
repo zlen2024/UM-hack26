@@ -209,3 +209,42 @@ class TelegramBot(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="telegram_bots")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
+    session_id = Column(String, index=True)
+    role = Column(String, index=True)
+    content = Column(Text, nullable=True)
+    tool_calls_json = Column(Text, nullable=True)
+    tool_results_json = Column(Text, nullable=True)
+    token_count = Column(Integer, nullable=True)
+    source = Column(String, nullable=True)
+    is_compacted = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+    contact = relationship("Contact")
+
+
+class BusinessBackground(Base):
+    __tablename__ = "business_backgrounds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    category = Column(String, index=True)
+    title = Column(String)
+    content = Column(Text)
+    tags_json = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+    priority = Column(Integer, default=0)
+    usage_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
+

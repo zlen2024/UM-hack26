@@ -161,3 +161,16 @@ export const chatery = {
   status: (userId: number) => api.get(`/chatery/status/${userId}`),
   qr: (userId: number) => api.get(`/chatery/qr/${userId}`),
 };
+
+export const chatMemory = {
+  getHistory: (sessionId: string, limit?: number) => 
+    api.get(`/chat-memory/${sessionId}`, { params: { limit } }),
+};
+
+export const businessBackground = {
+  list: (query?: string) => api.get('/business-background', { params: { query } }),
+  getActive: () => api.get('/business-background/active'),
+  create: (data: any) => api.post('/business-background', data),
+  update: (id: number, data: any) => api.put(`/business-background/${id}`, data),
+  delete: (id: number) => api.delete(`/business-background/${id}`),
+};
