@@ -139,13 +139,22 @@ def process_chatery_message_and_reply(
 
         from agents.cs_agent import process_whatsapp_message
 
-        result = process_whatsapp_message(agent_payload)
+        def send_immediate_reply(msg_text: str):
+            logger.info(f"Sending automated immediate reply to {resolved_phone} for session {session_id}")
+            send_chatery_text_message(
+                session_id=session_id,
+                chat_id=resolved_phone,
+                message=msg_text,
+                typing_time=1500,
+            )
+
+        result = process_whatsapp_message(agent_payload, send_callback=send_immediate_reply)
         response_text = result.get("response", "")
 
         if not response_text:
             return
 
-        logger.info(f"Sending automated reply to {resolved_phone} for session {session_id}")
+        logger.info(f"Sending automated final reply to {resolved_phone} for session {session_id}")
         send_result = send_chatery_text_message(
             session_id=session_id,
             chat_id=resolved_phone,

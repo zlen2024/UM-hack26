@@ -53,7 +53,14 @@ def process_telegram_update_and_reply(
             "message": text,
         }
 
-        result = process_telegram_message(message_data)
+        def send_immediate_reply(msg_text: str):
+            send_telegram_message(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                message=msg_text,
+            )
+
+        result = process_telegram_message(message_data, send_callback=send_immediate_reply)
         response_text = result.get("response", "")
 
         if not response_text:

@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import re
-from typing import Dict, Any, Optional, TypedDict, List
+from typing import Dict, Any, Optional, TypedDict, List, Callable
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
 from .graph.tools import CRM_TOOLS
@@ -105,7 +105,7 @@ def gatekeeper_node(state: AgentState) -> dict:
 RULES:
 1. You MUST respond in strictly valid JSON format matching the schema: {{"response": "string", "agent_loop": boolean, "query": "string"}}.
 2. If the user's input is a simple greeting, general chit-chat, or easily answerable without looking up systems, set "agent_loop" to false and provide a direct "response".
-3. If the user's input requires checking orders, retrieving business data, troubleshooting, or anything complex, set "agent_loop" to true, leave "response" blank (""), and extract the core intent into "query"."""
+3. If the user's input requires checking orders, retrieving business data, troubleshooting, or anything complex, set "agent_loop" to true, extract the core intent into "query", AND provide a polite preliminary "response" (e.g., "Let me check that for you right away...")."""
 
     try:
         messages_for_gatekeeper = [{"role": "system", "content": system_prompt}]
@@ -296,7 +296,7 @@ graph = builder.compile()
 
 # --- Main Process Functions ---
 
-def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
+def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
     """Process WhatsApp message and return AI response using LangGraph workflow.
 
     Args:
@@ -305,6 +305,7 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             - contact_name: str
             - phone: str
             - message: str
+        send_callback: Optional callback function to send intermediate messages back to the user.
 
     Returns:
         AI response from Ilmu AI model
@@ -328,9 +329,7 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             # Load history (up to 20 messages for context)
             db_history = get_history(db, session_id, limit=20, user_id=user_id)
             
-            # Format history for the agent (excluding the message we just saved to avoid duplication if we handle it below)
-            # Actually, the agent expects the current message to be in state.user_input and state.messages if we pass it.
-            # Let's pass the history as previous messages.
+            # Format history for the agent
             history_messages = []
             for msg in db_history[:-1]:  # Exclude the current message we just saved
                 if msg.role in ["user", "assistant", "system"]:
@@ -343,8 +342,24 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                 "messages": history_messages
             }
             
-            final_state = graph.invoke(initial_state)
+            # Execute the graph and capture intermediate outputs via stream()
+            final_state = None
+            for event in graph.stream(initial_state):
+                for node_name, node_state in event.items():
+                    final_state = node_state
+                    
+                    # If Gatekeeper just finished and it decided to loop, send the preliminary response!
+                    if node_name == "gatekeeper":
+                        gatekeeper_resp = node_state.get("gatekeeper_response", {})
+                        if gatekeeper_resp.get("agent_loop", False):
+                            preliminary_msg = gatekeeper_resp.get("response", "")
+                            if preliminary_msg and send_callback:
+                                logger.info(f"[WhatsApp] Sending preliminary response: {preliminary_msg}")
+                                send_callback(preliminary_msg)
             
+            if final_state is None:
+                final_state = initial_state
+
             gatekeeper_resp = final_state.get("gatekeeper_response", {})
             if not gatekeeper_resp.get("agent_loop", False):
                 ai_response = gatekeeper_resp.get("response", "")
@@ -374,7 +389,7 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
         "phone": phone,
     }
 
-def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
+def process_telegram_message(message_data: Dict[str, Any], send_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
     """Process Telegram message and return AI response using LangGraph workflow.
 
     Args:
@@ -383,6 +398,7 @@ def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             - contact_name: str
             - chat_id: str
             - message: str
+        send_callback: Optional callback function to send intermediate messages back to the user.
 
     Returns:
         AI response from Ilmu AI model
@@ -418,8 +434,23 @@ def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                 "messages": history_messages
             }
             
-            final_state = graph.invoke(initial_state)
+            # Execute the graph and capture intermediate outputs via stream()
+            final_state = None
+            for event in graph.stream(initial_state):
+                for node_name, node_state in event.items():
+                    final_state = node_state
+                    
+                    if node_name == "gatekeeper":
+                        gatekeeper_resp = node_state.get("gatekeeper_response", {})
+                        if gatekeeper_resp.get("agent_loop", False):
+                            preliminary_msg = gatekeeper_resp.get("response", "")
+                            if preliminary_msg and send_callback:
+                                logger.info(f"[Telegram] Sending preliminary response: {preliminary_msg}")
+                                send_callback(preliminary_msg)
             
+            if final_state is None:
+                final_state = initial_state
+
             gatekeeper_resp = final_state.get("gatekeeper_response", {})
             if not gatekeeper_resp.get("agent_loop", False):
                 ai_response = gatekeeper_resp.get("response", "")
