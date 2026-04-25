@@ -27,7 +27,6 @@ const navItems = [
   { href: '/emails', label: 'Emails', icon: Mail },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/business', label: 'Business Background', icon: BookOpen },
-  { href: '/knowledge-graph', label: 'Knowledge Graph', icon: Network },
 ];
 
 export default function Sidebar() {
