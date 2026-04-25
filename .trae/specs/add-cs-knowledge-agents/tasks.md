@@ -1,0 +1,16 @@
+# Tasks
+- [x] Task 1: Update dependencies
+  - [x] SubTask 1.1: Add `langgraph`, `langchain-openai`, `ladybug` (or `kuzu` if `ladybug` is unavailable), and `pydantic` to `backend/requirements.txt`.
+- [x] Task 2: Initialize Graph Database
+  - [x] SubTask 2.1: Create a connection to the `knowledge.lbug` graph database.
+  - [x] SubTask 2.2: Ensure `Entity` and `RelatedTo` schema tables exist on application startup using Cypher `CREATE NODE TABLE` and `CREATE REL TABLE`.
+- [x] Task 3: Implement LangGraph Agents
+  - [x] SubTask 3.1: Define LangGraph state schema (TypedDict) for the multi-agent workflow (e.g. tracking `input_text`, `is_useful`, `extracted_json`, `cypher_queries`, `execution_logs`).
+  - [x] SubTask 3.2: Implement the `Manager Node` to evaluate if the input contains important customer information (returns `is_useful: bool`).
+  - [x] SubTask 3.3: Implement the `Information Extractor Agent` using the DSNF-enhanced system prompt to extract nodes/edges.
+  - [x] SubTask 3.4: Implement the `Cypher Generator Agent` using the Cypher-generation system prompt to convert JSON to Cypher `MERGE` queries and execute them on the DB.
+  - [x] SubTask 3.5: Build and compile the LangGraph workflow (`StateGraph`) with conditional routing (Manager -> Extractor -> Cypher -> END).
+- [x] Task 4: Add FastAPI Routes
+  - [x] SubTask 4.1: Create `POST /api/cs/analyze` to trigger the LangGraph workflow and return the agent responses and execution logs.
+  - [x] SubTask 4.2: Create `GET /api/cs/graph` to return all nodes and edges from the graph database for visualization.
+  - [x] SubTask 4.3: Register the new routes in `backend/main.py`.

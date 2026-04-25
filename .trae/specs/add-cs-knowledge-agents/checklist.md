@@ -1,0 +1,6 @@
+- [x] `ladybug` (or equivalent) graph DB is initialized with `Entity` and `RelatedTo` tables.
+- [x] LangGraph state and nodes (Manager, Extractor, Cypher) are implemented.
+- [x] Information Extractor Agent correctly uses the provided DSNF system prompt to output JSON.
+- [x] Cypher Generator Agent successfully converts JSON to Cypher `MERGE` queries and executes them on the DB.
+- [x] `POST /api/cs/analyze` accepts text, checks if it is useful via Manager node, and processes it through the agents if useful.
+- [x] `GET /api/cs/graph` returns a list of nodes and edges matching the `Entity` and `RelatedTo` schema.
