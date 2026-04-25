@@ -175,6 +175,15 @@ export const businessBackground = {
   delete: (id: number) => api.delete(`/business-background/${id}`),
 };
 
+export const businessRules = {
+  get: () => api.get('/business-rules'),
+  update: (data: { rules_text: string }) => api.put('/business-rules', data),
+};
+
+export const chatMessages = {
+  list: () => api.get('/messages'),
+};
+
 export const kg = {
   getGraph: () => api.get('/graph'),
   addNode: (data: { id: string; label: string; properties: string }) => api.post('/node', data),

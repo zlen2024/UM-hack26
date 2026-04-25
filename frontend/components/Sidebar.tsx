@@ -27,7 +27,6 @@ const navItems = [
   { href: '/emails', label: 'Emails', icon: Mail },
   { href: '/reports', label: 'Reports', icon: BarChart3 },
   { href: '/business', label: 'Business Background', icon: BookOpen },
-  { href: '/knowledge-graph', label: 'Knowledge Graph', icon: Network },
 ];
 
 export default function Sidebar() {
@@ -198,9 +197,12 @@ export default function Sidebar() {
               <p className="text-xs text-muted mt-2">
                 Suggestions adapt to the open page.
               </p>
-              <div className="mt-3 inline-flex items-center rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-blue-700">
-                Coming soon
-              </div>
+              <Link 
+                href="/agent-manager"
+                className="mt-3 inline-flex items-center rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-50 transition-colors cursor-pointer"
+              >
+                Manage Agent
+              </Link>
             </div>
           </div>
         </div>

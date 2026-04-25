@@ -21,6 +21,7 @@ from routes import (
     chat_memory,
     business_background,
     business_rules,
+    messages,
     kg,
 )
 
@@ -189,6 +190,7 @@ app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
 app.include_router(chat_memory.router, prefix="/api/chat-memory", tags=["chat_memory"])
 app.include_router(business_background.router, prefix="/api/business-background", tags=["business_background"])
 app.include_router(business_rules.router, prefix="/api/business-rules", tags=["business_rules"])
+app.include_router(messages.router, prefix="/api/messages", tags=["messages"])
 app.include_router(kg.router, prefix="/api", tags=["knowledge-graph"])
 
 

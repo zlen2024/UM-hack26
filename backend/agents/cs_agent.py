@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import re
+import threading
 from typing import Dict, Any, Optional, TypedDict, List, Callable
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
@@ -54,6 +55,7 @@ class AgentState(TypedDict, total=False):
     user_input: str
     user_id: int
     contact_name: str
+    phone: str
     business_context: str
     business_rules: str
     gatekeeper_response: dict
@@ -109,6 +111,7 @@ def gatekeeper_node(state: AgentState) -> dict:
 Your job is to analyze the user's input and determine if it should be routed to the main agent loop.
 Business User ID: {state.get('user_id')}
 Customer Name: {state.get('contact_name')}
+Customer Phone/ID: {state.get('phone')}
 {state.get('business_context', '')}{state.get('business_rules', '')}
 === STRICT RULES ===
 1. You MUST respond in strictly valid JSON format matching the schema: {{"response": "string", "agent_loop": boolean, "query": "string"}}.
@@ -245,6 +248,7 @@ def manager_node(state: AgentState) -> dict:
     system_prompt = f"""You are the Master Workflow Planner and Conversational Agent for a customer service business.
 Business User ID: {state.get('user_id')}
 Customer Name: {state.get('contact_name')}
+Customer Phone/ID: {state.get('phone')}
 {state.get('business_context', '')}{state.get('business_rules', '')}
 === ROLE & OBJECTIVE ===
 You handle user queries, execute necessary backend tasks using tools, and maintain a polite, helpful conversation.
@@ -389,28 +393,34 @@ def manager_router(state: AgentState) -> str:
         logger.info("[ROUTER] Manager -> Worker (Tasks need execution)")
         return "worker"
         
-    if state.get("trigger_kg"):
-        logger.info("[ROUTER] Manager -> Information Extractor (KG Triggered)")
-        return "information_extractor"
-        
     logger.info("[ROUTER] Manager -> END (Final response ready)")
     return END
 
-from agents.kg_nodes import information_extractor_node, cypher_generator_node
+# We remove information_extractor and cypher_generator from the main graph
+# so they don't block the response. We'll run them in a background thread instead.
+def run_kg_extraction_in_background(state: dict):
+    logger.info("--- [BACKGROUND] Running KG Extraction ---")
+    try:
+        from agents.kg_nodes import information_extractor_node, cypher_generator_node
+        logger.info("[Background] Running Information Extractor")
+        extractor_result = information_extractor_node(state)
+        state.update(extractor_result)
+        
+        logger.info("[Background] Running Cypher Generator")
+        cypher_generator_node(state)
+        logger.info("[Background] KG Extraction complete")
+    except Exception as e:
+        logger.error(f"[Background] Error in KG Extraction: {e}", exc_info=True)
 
 builder = StateGraph(AgentState)
 builder.add_node("gatekeeper", gatekeeper_node)
 builder.add_node("manager", manager_node)
 builder.add_node("worker", worker_node)
-builder.add_node("information_extractor", information_extractor_node)
-builder.add_node("cypher_generator", cypher_generator_node)
 
 builder.add_edge(START, "gatekeeper")
 builder.add_conditional_edges("gatekeeper", gatekeeper_router)
 builder.add_conditional_edges("manager", manager_router)
 builder.add_edge("worker", "manager")
-builder.add_edge("information_extractor", "cypher_generator")
-builder.add_edge("cypher_generator", END)
 
 graph = builder.compile()
 
@@ -485,6 +495,7 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
+                "phone": phone,
                 "business_context": business_context + kg_context,
                 "business_rules": business_rules,
                 "messages": history_messages
@@ -521,6 +532,11 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
             # Save assistant response
             if ai_response:
                 save_message(db, session_id, "assistant", ai_response, user_id=user_id)
+                
+            # Trigger background KG extraction if needed
+            if final_state.get("trigger_kg"):
+                logger.info("[WhatsApp] Triggering background KG extraction...")
+                threading.Thread(target=run_kg_extraction_in_background, args=(final_state,), daemon=True).start()
                 
         finally:
             db.close()
@@ -603,6 +619,7 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
+                "phone": chat_id,  # Using chat_id as phone for Telegram
                 "business_context": business_context + kg_context,
                 "business_rules": business_rules,
                 "messages": history_messages
@@ -638,6 +655,11 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
             # Save assistant response
             if ai_response:
                 save_message(db, session_id, "assistant", ai_response, user_id=user_id)
+                
+            # Trigger background KG extraction if needed
+            if final_state.get("trigger_kg"):
+                logger.info("[Telegram] Triggering background KG extraction...")
+                threading.Thread(target=run_kg_extraction_in_background, args=(final_state,), daemon=True).start()
                 
         finally:
             db.close()
