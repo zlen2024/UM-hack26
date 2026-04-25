@@ -202,7 +202,7 @@ Respond with ONLY 'YES' or 'NO'."""
     try:
         client = get_ilmu_client()
         response = client.chat.completions.create(
-            model="ilmu-mini-1.0", # Fast model
+            model="ilmu-glm-5.1", # Fast model
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
             max_tokens=10,
