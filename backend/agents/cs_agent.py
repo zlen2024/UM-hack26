@@ -132,11 +132,20 @@ Output: {{"response": "You're welcome! Let me know if you need anything else.", 
 Input: "can you check my order status?"
 Output: {{"response": "Let me check that for you right away...", "agent_loop": true, "query": "check order status"}}"""
 
+    # Format history as a string to avoid confusing the assistant role
+    history_text = ""
+    for m in state.get("messages", []):
+        role = "Customer" if m["role"] == "user" else "Agent"
+        history_text += f"{role}: {m['content']}\n"
+        
+    if history_text:
+        system_prompt += f"\n=== RECENT CONVERSATION HISTORY ===\n{history_text}"
+
     try:
-        messages_for_gatekeeper = [{"role": "system", "content": system_prompt}]
-        for m in state.get("messages", []):
-            messages_for_gatekeeper.append(m)
-        messages_for_gatekeeper.append({"role": "user", "content": state.get("user_input", "")})
+        messages_for_gatekeeper = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f'Input: "{state.get("user_input", "")}"'}
+        ]
 
         response = client.chat.completions.create(
             model="ilmu-glm-5.1",
