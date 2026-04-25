@@ -54,6 +54,8 @@ class AgentState(TypedDict, total=False):
     user_input: str
     user_id: int
     contact_name: str
+    business_context: str
+    business_rules: str
     gatekeeper_response: dict
     messages: List[dict]
     worker_error: str
@@ -107,7 +109,7 @@ def gatekeeper_node(state: AgentState) -> dict:
 Your job is to analyze the user's input and determine if it should be routed to the main agent loop.
 Business User ID: {state.get('user_id')}
 Customer Name: {state.get('contact_name')}
-
+{state.get('business_context', '')}{state.get('business_rules', '')}
 === STRICT RULES ===
 1. You MUST respond in strictly valid JSON format matching the schema: {{"response": "string", "agent_loop": boolean, "query": "string"}}.
 2. SET `agent_loop` = false ONLY IF the input is a brief, simple greeting (e.g., "hi", "thanks") with NO other actionable information. Provide a direct "response".
@@ -220,7 +222,7 @@ def manager_node(state: AgentState) -> dict:
     system_prompt = f"""You are the Master Workflow Planner and Conversational Agent for a customer service business.
 Business User ID: {state.get('user_id')}
 Customer Name: {state.get('contact_name')}
-
+{state.get('business_context', '')}{state.get('business_rules', '')}
 === ROLE & OBJECTIVE ===
 You handle user queries, execute necessary backend tasks using tools, and maintain a polite, helpful conversation.
 
@@ -412,11 +414,26 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
     try:
         from database import SessionLocal
         from agents.memory import save_message, get_history
+        from agents.business_context import get_active, get_business_rule
         
         session_id = f"wa_{phone}"
         db = SessionLocal()
         
         try:
+            # Fetch business background and rules
+            active_bgs = get_active(db, user_id) if user_id else []
+            business_context = ""
+            if active_bgs:
+                business_context = "=== BUSINESS BACKGROUND ===\n"
+                for bg in active_bgs:
+                    business_context += f"[{bg.category}] {bg.title}: {bg.content}\n"
+                business_context += "\n"
+                
+            rules_text = get_business_rule(db, user_id) if user_id else None
+            business_rules = ""
+            if rules_text:
+                business_rules = f"=== BUSINESS RULES ===\n{rules_text}\n\n"
+
             # Save user message
             save_message(db, session_id, "user", message, user_id=user_id)
             
@@ -433,6 +450,8 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
+                "business_context": business_context,
+                "business_rules": business_rules,
                 "messages": history_messages
             }
             
@@ -504,11 +523,26 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
     try:
         from database import SessionLocal
         from agents.memory import save_message, get_history
+        from agents.business_context import get_active, get_business_rule
         
         session_id = f"tg_{chat_id}"
         db = SessionLocal()
         
         try:
+            # Fetch business background and rules
+            active_bgs = get_active(db, user_id) if user_id else []
+            business_context = ""
+            if active_bgs:
+                business_context = "=== BUSINESS BACKGROUND ===\n"
+                for bg in active_bgs:
+                    business_context += f"[{bg.category}] {bg.title}: {bg.content}\n"
+                business_context += "\n"
+                
+            rules_text = get_business_rule(db, user_id) if user_id else None
+            business_rules = ""
+            if rules_text:
+                business_rules = f"=== BUSINESS RULES ===\n{rules_text}\n\n"
+
             # Save user message
             save_message(db, session_id, "user", message, user_id=user_id)
             
@@ -524,6 +558,8 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
+                "business_context": business_context,
+                "business_rules": business_rules,
                 "messages": history_messages
             }
             

@@ -11,28 +11,29 @@ The user requested that the "business information" (which maps to the existing `
 ## Proposed Changes
 
 ### 1. Add `BusinessRule` Model (`backend/models.py`)
-- Define a new SQLAlchemy model `BusinessRule` with columns: `id`, `user_id`, `rule_name`, `description`, `is_active`, `priority`, `created_at`, `updated_at`.
-- Link it to the `User` model.
+- Define a new SQLAlchemy model `BusinessRule` with columns: `id`, `user_id` (unique), `rules_text` (Text), `created_at`, `updated_at`.
+- Link it to the `User` model. This will store all business rules as a single prompt/text block per user.
 
 ### 2. Create Data Access Layer (`backend/agents/business_context.py`)
-- Add a new helper function `get_active_rules(db, user_id)` to fetch active business rules ordered by priority.
+- Add helper functions `get_business_rule(db, user_id)` and `update_business_rule(db, user_id, text)` to manage the single business rule record.
 
 ### 3. Create API Routes for Business Rules (`backend/routes/business_rules.py` & `backend/main.py`)
-- Create CRUD endpoints (`POST /api/business-rules`, `GET /api/business-rules/active`, `PUT /api/business-rules/{id}`) so users can manage these rules from the frontend.
+- Create endpoints (`GET /api/business-rules`, `PUT /api/business-rules`) so users can view and edit their single block of business rules from the frontend.
 - Register the new router in `backend/main.py`.
 
 ### 4. Inject Context into Agent Prompts (`backend/agents/cs_agent.py`)
 - Update `gatekeeper_node` and `manager_node`:
   - Open a database session using `SessionLocal()`.
   - Fetch active `BusinessBackground` entries using `get_active()`.
-  - Fetch active `BusinessRule` entries using `get_active_rules()`.
+  - Fetch the single `BusinessRule` entry using `get_business_rule()`.
+  - Handle cases where there is no data in the DB gracefully (e.g., if `get_active()` or `get_business_rule()` return empty/None, simply do not append that block to the prompt).
   - Format the data into text blocks (e.g., `=== BUSINESS INFORMATION ===` and `=== BUSINESS RULES ===`).
   - Append these text blocks to the `system_prompt` strings of both the Gatekeeper and Manager LLMs.
   - Close the database session safely using a `try...finally` block.
 
 ## Assumptions & Decisions
-- The `BusinessBackground` and `BusinessRule` data should only include active entries (`is_active == True`) to save token context limits.
-- Injecting all columns means we will include the category/rule name, title, and the full content/description.
+- The `BusinessBackground` data will only include active entries (`is_active == True`).
+- The Business Rules will be a single text column per user so they can free-form type their closing deals and policies.
 - The `Base.metadata.create_all(bind=engine)` in `main.py` will automatically create the new `business_rules` table when the app restarts.
 
 ## Verification Steps
