@@ -20,6 +20,8 @@ from routes import (
     telegram,
     chat_memory,
     business_background,
+    business_rules,
+    kg,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
@@ -137,11 +139,29 @@ def ensure_telegram_table() -> None:
             """))
             conn.execute(text("CREATE INDEX idx_telegram_user_id ON telegram_bots(user_id)"))
 
+def ensure_business_rules_table() -> None:
+    with engine.begin() as conn:
+        result = conn.execute(text(
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'business_rules'"
+        )).fetchone()
+        if not result:
+            conn.execute(text("""
+                CREATE TABLE business_rules (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER UNIQUE NOT NULL REFERENCES users(id),
+                    rules_text TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            conn.execute(text("CREATE INDEX idx_business_rules_user_id ON business_rules(user_id)"))
+
 ensure_activity_columns()
 ensure_user_columns()
 ensure_whatsapp_table()
 ensure_telegram_table()
 ensure_chatery_whatsapp_table()
+ensure_business_rules_table()
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
@@ -168,6 +188,8 @@ app.include_router(telegram.router, prefix="/api/telegram", tags=["telegram"])
 app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
 app.include_router(chat_memory.router, prefix="/api/chat-memory", tags=["chat_memory"])
 app.include_router(business_background.router, prefix="/api/business-background", tags=["business_background"])
+app.include_router(business_rules.router, prefix="/api/business-rules", tags=["business_rules"])
+app.include_router(kg.router, prefix="/api", tags=["knowledge-graph"])
 
 
 @app.get("/")

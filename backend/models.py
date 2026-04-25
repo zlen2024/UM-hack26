@@ -54,6 +54,7 @@ class User(Base):
         "Activity", back_populates="owner", foreign_keys="Activity.user_id"
     )
     emails = relationship("Email", back_populates="owner")
+    business_rule = relationship("BusinessRule", uselist=False, back_populates="user")
 
 
 class Contact(Base):
@@ -247,4 +248,17 @@ class BusinessBackground(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User")
+
+
+class BusinessRule(Base):
+    __tablename__ = "business_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, index=True)
+    rules_text = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="business_rule")
+
 

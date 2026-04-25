@@ -54,9 +54,14 @@ class AgentState(TypedDict, total=False):
     user_input: str
     user_id: int
     contact_name: str
+    business_context: str
+    business_rules: str
     gatekeeper_response: dict
     messages: List[dict]
     worker_error: str
+    extracted_kg_data: dict
+    executed_kg_queries: list
+    trigger_kg: bool
 
 def format_tool_to_openai(tool) -> dict:
     if hasattr(tool, "args_schema") and tool.args_schema:
@@ -100,18 +105,47 @@ def gatekeeper_node(state: AgentState) -> dict:
         }
     
     client = get_ilmu_client()
-    system_prompt = f"""You are a highly efficient Customer Service Intent Router for a business. Your ONLY job is to analyze the user's input, determine if it requires complex backend processing, and route it accordingly. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
-
-RULES:
+    system_prompt = f"""You are an Intent Router and Context Detector for a customer service business.
+Your job is to analyze the user's input and determine if it should be routed to the main agent loop.
+Business User ID: {state.get('user_id')}
+Customer Name: {state.get('contact_name')}
+{state.get('business_context', '')}{state.get('business_rules', '')}
+=== STRICT RULES ===
 1. You MUST respond in strictly valid JSON format matching the schema: {{"response": "string", "agent_loop": boolean, "query": "string"}}.
-2. If the user's input is a simple greeting, general chit-chat, or easily answerable without looking up systems, set "agent_loop" to false and provide a direct "response".
-3. If the user's input requires checking orders, retrieving business data, troubleshooting, or anything complex, set "agent_loop" to true, extract the core intent into "query", AND provide a polite preliminary "response" (e.g., "Let me check that for you right away...")."""
+2. SET `agent_loop` = false ONLY IF the input is a brief, simple greeting (e.g., "hi", "thanks") with NO other actionable information. Provide a direct "response".
+3. SET `agent_loop` = true IF the input contains ANY of the following:
+   - Requests requiring system checks, tool usage, or complex answers.
+   - Personal details, preferences (e.g., likes/dislikes), or facts (e.g., "my name is...", "I love...").
+   - Business strategies, goals, or context that should be remembered.
+4. When `agent_loop` is true:
+   - For complex tasks, provide a polite preliminary "response" (e.g., "Let me check that for you...").
+   - For users sharing information/preferences, leave "response" empty ("") so the main agent can reply naturally.
+   - Extract the core intent or shared facts into the "query" field.
+
+=== FEW-SHOT EXAMPLES ===
+Input: "hello.. my name is Daniel... and i love ayam... but i hate sotong.."
+Output: {{"response": "", "agent_loop": true, "query": "User states their name is Daniel, they love ayam, and hate sotong."}}
+
+Input: "thanks for the help"
+Output: {{"response": "You're welcome! Let me know if you need anything else.", "agent_loop": false, "query": ""}}
+
+Input: "can you check my order status?"
+Output: {{"response": "Let me check that for you right away...", "agent_loop": true, "query": "check order status"}}"""
+
+    # Format history as a string to avoid confusing the assistant role
+    history_text = ""
+    for m in state.get("messages", []):
+        role = "Customer" if m["role"] == "user" else "Agent"
+        history_text += f"{role}: {m['content']}\n"
+        
+    if history_text:
+        system_prompt += f"\n=== RECENT CONVERSATION HISTORY ===\n{history_text}"
 
     try:
-        messages_for_gatekeeper = [{"role": "system", "content": system_prompt}]
-        for m in state.get("messages", []):
-            messages_for_gatekeeper.append(m)
-        messages_for_gatekeeper.append({"role": "user", "content": state.get("user_input", "")})
+        messages_for_gatekeeper = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f'Input: "{state.get("user_input", "")}"'}
+        ]
 
         response = client.chat.completions.create(
             model="ilmu-glm-5.1",
@@ -146,21 +180,86 @@ RULES:
 
     return {"gatekeeper_response": result, "messages": new_messages}
 
+def evaluate_kg_trigger(text: str) -> bool:
+    """Evaluate if the text contains important customer details (preferences, strategies, etc.)."""
+    if not text:
+        return False
+    
+    prompt = f"""Analyze the following text and determine if it contains important customer details that should be extracted into a Knowledge Graph.
+
+=== IMPORTANT DETAILS INCLUDE ===
+- Personal preferences (e.g., likes, dislikes, favorite foods, favorite colors)
+- Identity facts (e.g., names, roles, relationships)
+- Business strategies, goals, or objectives
+- Significant personal or business facts (e.g., "I am the CEO", "We use AWS")
+
+=== EXAMPLES ===
+Text: "hello.. my name is Daniel... and i love ayam... but i hate sotong.."
+Response: YES
+
+Text: "can you check my order status?"
+Response: NO
+
+Text: "I prefer to be contacted via email."
+Response: YES
+
+Text: "thanks for your help"
+Response: NO
+
+=== TASK ===
+Text: "{text}"
+Regardless of the language of the text, you MUST output a valid JSON object with a single boolean field "trigger". 
+Output {{"trigger": true}} if the text contains important customer details. Output {{"trigger": false}} otherwise."""
+
+    try:
+        client = get_ilmu_client()
+        logger.info(f"[KG Evaluator] Sending prompt to model: {prompt}")
+        response = client.chat.completions.create(
+            model="ilmu-glm-5.1", # Fast model
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=2000,
+            response_format={"type": "json_object"}
+        )
+        content = response.choices[0].message.content
+        logger.info(f"[KG Evaluator] Raw Output: {content}")
+        
+        if not content:
+            return False
+            
+        try:
+            result = parse_llm_json(content)
+            return result.get("trigger", False)
+        except Exception as json_e:
+            logger.error(f"[KG Evaluator] JSON parsing failed: {json_e}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"[KG Evaluator] Error: {e}")
+        return False
+
 def manager_node(state: AgentState) -> dict:
     logger.info("--- [NODE: MANAGER] Executing ---")
     client = get_ilmu_client()
     
-    system_prompt = f"""You are the Master Workflow Planner for a customer service business. You receive queries or system errors and must determine the exact sequence of tasks needed to resolve them. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
-    
-    CRITICAL INSTRUCTIONS FOR USING TOOLS:
-    1. **Contact Management**: Use `list_contacts` FIRST to find if a customer exists before creating a new profile. Use `update_contact` to modify email, phone, or add notes from the conversation.
-    2. **Support Tasks**: Use `create_task` to assign follow-up actions (e.g., check order status, process refund) to the team. Set `priority` and `due_date` appropriately.
-    3. **Interaction Logging**: Always use `create_activity` to log the support interaction after resolving the customer's request. Associate it with `contact_id` if known.
+    system_prompt = f"""You are the Master Workflow Planner and Conversational Agent for a customer service business.
+Business User ID: {state.get('user_id')}
+Customer Name: {state.get('contact_name')}
+{state.get('business_context', '')}{state.get('business_rules', '')}
+=== ROLE & OBJECTIVE ===
+You handle user queries, execute necessary backend tasks using tools, and maintain a polite, helpful conversation.
 
-RULES:
-1. If the query requires checking company policy, FAQs, or general information, or if you lack information from the user, respond directly to the user.
-2. If the query requires executing actions, use the provided tools.
-3. If previous tools were successful, provide the final response summarizing the outcome to the user."""
+=== TOOL USAGE RULES ===
+1. **Contact Management**: Use `list_contacts` FIRST to find if a customer exists before creating a new profile. Use `update_contact` to modify email, phone, or add notes.
+2. **Support Tasks**: Use `create_task` to assign follow-up actions to the team.
+3. **Interaction Logging**: Use `create_activity` to log the support interaction after resolving requests.
+
+=== CONVERSATION RULES ===
+1. If the user shares personal details, preferences (likes/dislikes), or business strategies, acknowledge them politely and naturally in your response. (Note: A background Knowledge Graph agent will automatically extract and save this data, so you do NOT need to use any tools to save this specific knowledge).
+2. If the query requires checking policy or general info, respond directly.
+3. If the query requires actions, use the tools. Once successful, provide a final summary to the user.
+4. Always maintain a helpful and professional tone.
+5. **Language Rule**: Always respond in the same language the user is speaking. If they use mixed languages (e.g., English and Malay), respond in English by default unless they explicitly request otherwise."""
 
     messages = state.get("messages", [])
     if not messages:
@@ -184,6 +283,7 @@ RULES:
         msg_dict = {"role": "assistant"}
         if msg.content is not None:
             msg_dict["content"] = msg.content
+            logger.info(f"[Manager] Assistant Content Output: {msg.content}")
         if msg.tool_calls:
             msg_dict["tool_calls"] = [
                 {
@@ -197,16 +297,27 @@ RULES:
             ]
         
         logger.info(f"[Manager] Output Tool Calls: {len(msg_dict.get('tool_calls', []))}")
+        
+        # If the manager is done (no tool calls), we evaluate if we need to extract knowledge
+        trigger_kg = False
+        if not msg_dict.get("tool_calls"):
+            user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+            if user_msg:
+                trigger_kg = evaluate_kg_trigger(user_msg.get("content", ""))
+                logger.info(f"[Manager] Evaluated KG trigger: {trigger_kg}")
+                
         return {
             "messages": messages + [msg_dict],
-            "worker_error": ""
+            "worker_error": "",
+            "trigger_kg": trigger_kg
         }
     except Exception as e:
-        logger.error(f"[Manager] Error: {e}", exc_info=True)
+        logger.error(f"[Manager] Error parsing response: {e}", exc_info=True)
         fallback = {"role": "assistant", "content": "I'm sorry, I'm having trouble planning the tasks to resolve your query."}
         return {
             "messages": messages + [fallback],
-            "worker_error": str(e)
+            "worker_error": str(e),
+            "trigger_kg": False
         }
 
 def worker_node(state: AgentState) -> dict:
@@ -278,18 +389,28 @@ def manager_router(state: AgentState) -> str:
         logger.info("[ROUTER] Manager -> Worker (Tasks need execution)")
         return "worker"
         
+    if state.get("trigger_kg"):
+        logger.info("[ROUTER] Manager -> Information Extractor (KG Triggered)")
+        return "information_extractor"
+        
     logger.info("[ROUTER] Manager -> END (Final response ready)")
     return END
+
+from agents.kg_nodes import information_extractor_node, cypher_generator_node
 
 builder = StateGraph(AgentState)
 builder.add_node("gatekeeper", gatekeeper_node)
 builder.add_node("manager", manager_node)
 builder.add_node("worker", worker_node)
+builder.add_node("information_extractor", information_extractor_node)
+builder.add_node("cypher_generator", cypher_generator_node)
 
 builder.add_edge(START, "gatekeeper")
 builder.add_conditional_edges("gatekeeper", gatekeeper_router)
 builder.add_conditional_edges("manager", manager_router)
 builder.add_edge("worker", "manager")
+builder.add_edge("information_extractor", "cypher_generator")
+builder.add_edge("cypher_generator", END)
 
 graph = builder.compile()
 
@@ -318,11 +439,36 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
     try:
         from database import SessionLocal
         from agents.memory import save_message, get_history
+        from agents.business_context import get_active, get_business_rule
+        from knowledge_db import KnowledgeDBFactory
         
         session_id = f"wa_{phone}"
         db = SessionLocal()
         
         try:
+            # Fetch business background and rules
+            active_bgs = get_active(db, user_id) if user_id else []
+            business_context = ""
+            if active_bgs:
+                business_context = "=== BUSINESS BACKGROUND ===\n"
+                for bg in active_bgs:
+                    business_context += f"[{bg.category}] {bg.title}: {bg.content}\n"
+                business_context += "\n"
+                
+            rules_text = get_business_rule(db, user_id) if user_id else None
+            business_rules = ""
+            if rules_text:
+                business_rules = f"=== BUSINESS RULES ===\n{rules_text}\n\n"
+
+            # Actively query knowledge graph based on user input
+            kg_context = ""
+            if user_id:
+                try:
+                    kg_db = KnowledgeDBFactory.get_instance(user_id)
+                    kg_context = kg_db.get_relevant_context(message)
+                except Exception as e:
+                    logger.error(f"[WhatsApp] Error querying KG context: {e}")
+
             # Save user message
             save_message(db, session_id, "user", message, user_id=user_id)
             
@@ -339,6 +485,8 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
+                "business_context": business_context + kg_context,
+                "business_rules": business_rules,
                 "messages": history_messages
             }
             
@@ -410,11 +558,36 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
     try:
         from database import SessionLocal
         from agents.memory import save_message, get_history
+        from agents.business_context import get_active, get_business_rule
+        from knowledge_db import KnowledgeDBFactory
         
         session_id = f"tg_{chat_id}"
         db = SessionLocal()
         
         try:
+            # Fetch business background and rules
+            active_bgs = get_active(db, user_id) if user_id else []
+            business_context = ""
+            if active_bgs:
+                business_context = "=== BUSINESS BACKGROUND ===\n"
+                for bg in active_bgs:
+                    business_context += f"[{bg.category}] {bg.title}: {bg.content}\n"
+                business_context += "\n"
+                
+            rules_text = get_business_rule(db, user_id) if user_id else None
+            business_rules = ""
+            if rules_text:
+                business_rules = f"=== BUSINESS RULES ===\n{rules_text}\n\n"
+
+            # Actively query knowledge graph based on user input
+            kg_context = ""
+            if user_id:
+                try:
+                    kg_db = KnowledgeDBFactory.get_instance(user_id)
+                    kg_context = kg_db.get_relevant_context(message)
+                except Exception as e:
+                    logger.error(f"[Telegram] Error querying KG context: {e}")
+
             # Save user message
             save_message(db, session_id, "user", message, user_id=user_id)
             
@@ -430,6 +603,8 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
+                "business_context": business_context + kg_context,
+                "business_rules": business_rules,
                 "messages": history_messages
             }
             

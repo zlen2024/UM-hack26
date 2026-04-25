@@ -3,7 +3,7 @@ import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import asc, desc, or_
 from typing import List, Optional, Dict, Any
-from models import BusinessBackground
+from models import BusinessBackground, BusinessRule
 
 logger = logging.getLogger(__name__)
 
@@ -76,3 +76,34 @@ def get_active(db: Session, user_id: int) -> List[BusinessBackground]:
         BusinessBackground.user_id == user_id,
         BusinessBackground.is_active == True
     ).order_by(desc(BusinessBackground.priority)).all()
+
+def get_business_rule(db: Session, user_id: int) -> Optional[str]:
+    """Get the business rules text for a user."""
+    rule = db.query(BusinessRule).filter(BusinessRule.user_id == user_id).first()
+    if not rule or not rule.rules_text or not rule.rules_text.strip():
+        return None
+    return rule.rules_text
+
+def update_business_rule(db: Session, user_id: int, rules_text: Optional[str]) -> Optional[BusinessRule]:
+    """Create or update the business rule for a user."""
+    rule = db.query(BusinessRule).filter(BusinessRule.user_id == user_id).first()
+    
+    if not rules_text or not rules_text.strip():
+        if rule:
+            rule.rules_text = None
+            db.commit()
+            db.refresh(rule)
+        return None
+
+    if rule:
+        rule.rules_text = rules_text
+        db.commit()
+        db.refresh(rule)
+        return rule
+        
+    rule = BusinessRule(user_id=user_id, rules_text=rules_text)
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return rule
+
