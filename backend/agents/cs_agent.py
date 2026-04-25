@@ -55,6 +55,7 @@ class AgentState(TypedDict, total=False):
     user_input: str
     user_id: int
     contact_name: str
+    phone: str
     business_context: str
     business_rules: str
     gatekeeper_response: dict
@@ -110,6 +111,7 @@ def gatekeeper_node(state: AgentState) -> dict:
 Your job is to analyze the user's input and determine if it should be routed to the main agent loop.
 Business User ID: {state.get('user_id')}
 Customer Name: {state.get('contact_name')}
+Customer Phone/ID: {state.get('phone')}
 {state.get('business_context', '')}{state.get('business_rules', '')}
 === STRICT RULES ===
 1. You MUST respond in strictly valid JSON format matching the schema: {{"response": "string", "agent_loop": boolean, "query": "string"}}.
@@ -246,6 +248,7 @@ def manager_node(state: AgentState) -> dict:
     system_prompt = f"""You are the Master Workflow Planner and Conversational Agent for a customer service business.
 Business User ID: {state.get('user_id')}
 Customer Name: {state.get('contact_name')}
+Customer Phone/ID: {state.get('phone')}
 {state.get('business_context', '')}{state.get('business_rules', '')}
 === ROLE & OBJECTIVE ===
 You handle user queries, execute necessary backend tasks using tools, and maintain a polite, helpful conversation.
@@ -492,6 +495,7 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
+                "phone": phone,
                 "business_context": business_context + kg_context,
                 "business_rules": business_rules,
                 "messages": history_messages
@@ -615,6 +619,7 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
+                "phone": chat_id,  # Using chat_id as phone for Telegram
                 "business_context": business_context + kg_context,
                 "business_rules": business_rules,
                 "messages": history_messages

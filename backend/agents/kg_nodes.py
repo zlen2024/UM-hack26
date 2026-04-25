@@ -9,12 +9,15 @@ def _get_openai_client():
 def information_extractor_node(state: dict) -> dict:
     """Extract nodes and edges as structured JSON using DSNF rules."""
     messages = state.get("messages", [])
+    contact_name = state.get("contact_name", "Unknown User")
+    phone = state.get("phone", "Unknown Phone")
     
     # We only care about the latest user message
     user_msg = next((m for m in reversed(messages) if isinstance(m, dict) and m.get("role") == "user" or getattr(m, "type", getattr(m, "role", "")) in ["human", "user"]), None)
     text_to_extract = ""
     if user_msg:
         text_to_extract = user_msg.get("content") if isinstance(user_msg, dict) else getattr(user_msg, "content", "")
+        text_to_extract = f"Context - Customer Name: {contact_name}, Phone: {phone}\nUser Message: {text_to_extract}"
     
     prompt = """You are a World-Class Data Ontology Expert and Knowledge Graph Architect. Your primary task is to analyze user text and extract information into entities (Nodes) and relationships (Edges) in strict JSON format. You must utilize Dependency Syntactic Normal Forms (DSNFs) to accurately derive relation triples from complex syntax.
 
