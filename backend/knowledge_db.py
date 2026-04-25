@@ -94,6 +94,44 @@ class KnowledgeDB:
         query = f"MATCH (a:Entity {{id: '{safe_source}'}})-[r:RelatedTo {{type: '{safe_type}'}}]->(b:Entity {{id: '{safe_target}'}}) DELETE r"
         return self.execute_cypher(query)
 
+    def get_relevant_context(self, text: str) -> str:
+        """Extract relevant facts from the graph based on the user's text."""
+        import re
+        # Extremely basic keyword extraction (could be improved with NLP/spaCy if needed)
+        # Just grab words longer than 3 characters
+        words = re.findall(r'\b\w{4,}\b', text.lower())
+        
+        if not words:
+            return ""
+            
+        facts = []
+        for word in words:
+            safe_word = word.replace("'", "\\'")
+            
+            # Find matching nodes
+            try:
+                node_query = f"MATCH (n:Entity) WHERE lower(n.id) CONTAINS '{safe_word}' OR lower(n.label) CONTAINS '{safe_word}' RETURN n.id, n.label LIMIT 3"
+                nodes = self.execute_cypher(node_query)
+                for node in nodes:
+                    facts.append(f"Node: {node.get('n.id')} (Type: {node.get('n.label')})")
+                    
+                # Find matching edges (1-hop)
+                edge_query = f"MATCH (a:Entity)-[r:RelatedTo]->(b:Entity) WHERE lower(a.id) CONTAINS '{safe_word}' OR lower(b.id) CONTAINS '{safe_word}' RETURN a.id, r.type, b.id LIMIT 5"
+                edges = self.execute_cypher(edge_query)
+                for edge in edges:
+                    facts.append(f"Fact: {edge.get('a.id')} is {edge.get('r.type')} {edge.get('b.id')}")
+            except Exception as e:
+                # Catch Ladybug syntax or execution errors and continue
+                print(f"Error querying KG for '{safe_word}': {e}")
+                continue
+                
+        # Deduplicate and format
+        unique_facts = list(set(facts))
+        if not unique_facts:
+            return ""
+            
+        return "=== CUSTOMER KNOWLEDGE GRAPH ===\n" + "\n".join(unique_facts) + "\n\n"
+
     def close(self):
         self.conn.close()
 

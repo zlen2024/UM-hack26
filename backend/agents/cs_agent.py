@@ -415,6 +415,7 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
         from database import SessionLocal
         from agents.memory import save_message, get_history
         from agents.business_context import get_active, get_business_rule
+        from knowledge_db import KnowledgeDBFactory
         
         session_id = f"wa_{phone}"
         db = SessionLocal()
@@ -434,6 +435,15 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
             if rules_text:
                 business_rules = f"=== BUSINESS RULES ===\n{rules_text}\n\n"
 
+            # Actively query knowledge graph based on user input
+            kg_context = ""
+            if user_id:
+                try:
+                    kg_db = KnowledgeDBFactory.get_instance(user_id)
+                    kg_context = kg_db.get_relevant_context(message)
+                except Exception as e:
+                    logger.error(f"[WhatsApp] Error querying KG context: {e}")
+
             # Save user message
             save_message(db, session_id, "user", message, user_id=user_id)
             
@@ -450,7 +460,7 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
-                "business_context": business_context,
+                "business_context": business_context + kg_context,
                 "business_rules": business_rules,
                 "messages": history_messages
             }
@@ -524,6 +534,7 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
         from database import SessionLocal
         from agents.memory import save_message, get_history
         from agents.business_context import get_active, get_business_rule
+        from knowledge_db import KnowledgeDBFactory
         
         session_id = f"tg_{chat_id}"
         db = SessionLocal()
@@ -543,6 +554,15 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
             if rules_text:
                 business_rules = f"=== BUSINESS RULES ===\n{rules_text}\n\n"
 
+            # Actively query knowledge graph based on user input
+            kg_context = ""
+            if user_id:
+                try:
+                    kg_db = KnowledgeDBFactory.get_instance(user_id)
+                    kg_context = kg_db.get_relevant_context(message)
+                except Exception as e:
+                    logger.error(f"[Telegram] Error querying KG context: {e}")
+
             # Save user message
             save_message(db, session_id, "user", message, user_id=user_id)
             
@@ -558,7 +578,7 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
                 "user_input": message,
                 "user_id": user_id,
                 "contact_name": contact_name,
-                "business_context": business_context,
+                "business_context": business_context + kg_context,
                 "business_rules": business_rules,
                 "messages": history_messages
             }
