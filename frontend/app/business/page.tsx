@@ -90,6 +90,11 @@ export default function BusinessBackgroundPage() {
   };
 
   const handleSave = async () => {
+    if (!formData.title.trim() || !formData.content.trim()) {
+      alert('Official Title and Content Narrative are required fields.');
+      return;
+    }
+
     try {
       const payload = {
         ...formData,
@@ -117,6 +122,15 @@ export default function BusinessBackgroundPage() {
       if (current) selectBackground(current);
     } else {
       setIsEditing(false);
+      // BUG FIX: Reset form data so ghost input doesn't linger when there are no items
+      setFormData({ 
+        category: 'technology', 
+        title: '', 
+        content: '', 
+        is_active: true, 
+        priority: 1,
+        tags: []
+      });
     }
   };
 
@@ -126,6 +140,15 @@ export default function BusinessBackgroundPage() {
       await businessApi.delete(id);
       if (activeBgId === id) {
         setActiveBgId(null);
+        // BUG FIX: Clear out formData immediately to prevent ghost data display
+        setFormData({ 
+          category: 'technology', 
+          title: '', 
+          content: '', 
+          is_active: true, 
+          priority: 1,
+          tags: []
+        });
       }
       loadBackgrounds();
     } catch (err) {
