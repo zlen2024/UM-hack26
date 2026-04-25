@@ -666,7 +666,7 @@ def get_dashboard(user_id: int = 1) -> str:
 
 @tool("save_chat_message", args_schema=SaveChatMessageInput)
 def save_chat_message(session_id: str, role: str, content: str, contact_id: Optional[int] = None) -> str:
-    """Save a chat message to memory. Used for tracking conversational context."""
+    """Save a chat message to memory. Do NOT use this for normal replies, as normal conversation is automatically saved. Use only for explicit manual logging."""
     from agents.memory import save_message
     try:
         actual_user_id = UserContext.get_user_id() or 1
@@ -696,9 +696,10 @@ def get_chat_history(session_id: str, limit: int = 50) -> str:
     """Get the recent chat history for a given session."""
     from agents.memory import get_history
     try:
+        actual_user_id = UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            messages = get_history(db, session_id, limit=limit)
+            messages = get_history(db, session_id, limit=limit, user_id=actual_user_id)
             return json.dumps({
                 "success": True,
                 "messages": [{

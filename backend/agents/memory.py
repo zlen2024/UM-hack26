@@ -1,7 +1,7 @@
 import json
 import logging
 from sqlalchemy.orm import Session
-from sqlalchemy import asc
+from sqlalchemy import asc, desc
 from typing import List, Optional, Dict, Any
 from models import ChatMessage
 
@@ -45,11 +45,14 @@ def save_message(
         
     return message
 
-def get_history(db: Session, session_id: str, limit: int = 50) -> List[ChatMessage]:
+def get_history(db: Session, session_id: str, limit: int = 50, user_id: Optional[int] = None) -> List[ChatMessage]:
     """Get chat history for a session."""
-    return db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id
-    ).order_by(asc(ChatMessage.created_at)).limit(limit).all()
+    query = db.query(ChatMessage).filter(ChatMessage.session_id == session_id)
+    if user_id is not None:
+        query = query.filter(ChatMessage.user_id == user_id)
+        
+    messages = query.order_by(desc(ChatMessage.created_at)).limit(limit).all()
+    return list(reversed(messages))
 
 def compact_messages(db: Session, session_id: str) -> None:
     """Compact chat history if it exceeds 50 messages.

@@ -216,7 +216,7 @@ def run_agent(message: str, user_id: int = 1, thread_id: Optional[str] = None) -
     
     try:
         # Load chat history
-        db_history = get_history(db, session_id, limit=50)
+        db_history = get_history(db, session_id, limit=50, user_id=user_id)
         history_messages = []
         for msg in db_history:
             if msg.role == "user":

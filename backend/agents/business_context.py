@@ -17,7 +17,7 @@ def save(
     is_active: bool = True,
     priority: int = 0,
     background_id: Optional[int] = None
-) -> BusinessBackground:
+) -> Optional[BusinessBackground]:
     """Create or update a business background entry."""
     if background_id:
         bg = db.query(BusinessBackground).filter(
@@ -35,6 +35,8 @@ def save(
             db.commit()
             db.refresh(bg)
             return bg
+        else:
+            return None
             
     # Create new
     bg = BusinessBackground(

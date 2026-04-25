@@ -16,7 +16,7 @@ def get_session_history(
     current_user: User = Depends(get_current_user)
 ):
     """Get chat history for a session."""
-    messages = get_history(db, session_id, limit=limit)
+    messages = get_history(db, session_id, limit=limit, user_id=current_user.id)
     return [
         {
             "id": m.id,
