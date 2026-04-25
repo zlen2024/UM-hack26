@@ -72,7 +72,7 @@ def information_extractor_node(state: dict) -> dict:
     
     try:
         response = _get_openai_client().chat.completions.create(
-            model=os.getenv("OPENAI_MODEL_NAME", "ilmu-mini-1.0"),
+            model=os.getenv("OPENAI_MODEL_NAME", "ilmu-glm-5.1"),
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": text_to_extract}
@@ -139,7 +139,7 @@ def cypher_generator_node(state: dict) -> dict:
 
     try:
         response = _get_openai_client().chat.completions.create(
-            model=os.getenv("OPENAI_MODEL_NAME", "ilmu-mini-1.0"),
+            model=os.getenv("OPENAI_MODEL_NAME", "ilmu-glm-5.1"),
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": json.dumps(extracted_data)}
