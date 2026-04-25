@@ -15,10 +15,14 @@ This means two things are failing:
 
 ## Proposed Changes
 
-### 1. Fix KG Evaluator Token Limit
+### 1. Fix KG Evaluator Token Limit and JSON Output
 - **File**: `backend/agents/cs_agent.py`
-- **What**: Increase `max_tokens` to allow the model breathing room.
-- **How**: Change `max_tokens=10` to `max_tokens=100` in `evaluate_kg_trigger`. The model will still just output "YES" or "NO", but it won't crash/abort due to token constraints.
+- **What**: Change `evaluate_kg_trigger` to use strict JSON mode and increase token limits.
+- **How**: 
+  - Change `max_tokens=10` to `max_tokens=2000`.
+  - Update the prompt to output a valid JSON object: `{"trigger": true}` or `{"trigger": false}`.
+  - Add `response_format={"type": "json_object"}` to the OpenAI API call.
+  - Parse the JSON response securely.
 
 ### 2. Improve Active Context Retrieval & Logging
 - **File**: `backend/knowledge_db.py` and `backend/agents/cs_agent.py`

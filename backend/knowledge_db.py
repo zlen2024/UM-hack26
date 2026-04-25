@@ -97,14 +97,19 @@ class KnowledgeDB:
     def get_relevant_context(self, text: str) -> str:
         """Extract relevant facts from the graph based on the user's text."""
         import re
-        # Extremely basic keyword extraction (could be improved with NLP/spaCy if needed)
-        # Just grab words longer than 3 characters
-        words = re.findall(r'\b\w{4,}\b', text.lower())
+        import logging
+        
+        logger = logging.getLogger("CS_Agent_Workflow")
+        
+        # Grab words 3 characters or longer (to catch names like "Ali", "Abu", etc.)
+        words = re.findall(r'\b\w{3,}\b', text.lower())
         
         if not words:
             return ""
             
         facts = []
+        logger.info(f"[KG Retrieval] Searching for keywords: {words}")
+        
         for word in words:
             safe_word = word.replace("'", "\\'")
             
@@ -122,14 +127,16 @@ class KnowledgeDB:
                     facts.append(f"Fact: {edge.get('a.id')} is {edge.get('r.type')} {edge.get('b.id')}")
             except Exception as e:
                 # Catch Ladybug syntax or execution errors and continue
-                print(f"Error querying KG for '{safe_word}': {e}")
+                logger.error(f"[KG Retrieval] Error querying KG for '{safe_word}': {e}")
                 continue
                 
         # Deduplicate and format
         unique_facts = list(set(facts))
         if not unique_facts:
+            logger.info(f"[KG Retrieval] No relevant facts found.")
             return ""
             
+        logger.info(f"[KG Retrieval] Found {len(unique_facts)} relevant facts.")
         return "=== CUSTOMER KNOWLEDGE GRAPH ===\n" + "\n".join(unique_facts) + "\n\n"
 
     def close(self):

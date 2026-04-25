@@ -199,7 +199,8 @@ Response: NO
 
 === TASK ===
 Text: "{text}"
-Regardless of the language of the text, you MUST respond with ONLY the English word 'YES' or 'NO'."""
+Regardless of the language of the text, you MUST output a valid JSON object with a single boolean field "trigger". 
+Output {{"trigger": true}} if the text contains important customer details. Output {{"trigger": false}} otherwise."""
 
     try:
         client = get_ilmu_client()
@@ -208,7 +209,8 @@ Regardless of the language of the text, you MUST respond with ONLY the English w
             model="ilmu-glm-5.1", # Fast model
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
-            max_tokens=10,
+            max_tokens=2000,
+            response_format={"type": "json_object"}
         )
         content = response.choices[0].message.content
         logger.info(f"[KG Evaluator] Raw Output: {content}")
@@ -216,10 +218,13 @@ Regardless of the language of the text, you MUST respond with ONLY the English w
         if not content:
             return False
             
-        # Robust parsing: regardless of the language returned, check for 'YES'
-        content_upper = content.strip().upper()
-        # Also check for Malay 'YA' just in case the model ignored instructions
-        return "YES" in content_upper or "YA" in content_upper
+        try:
+            result = parse_llm_json(content)
+            return result.get("trigger", False)
+        except Exception as json_e:
+            logger.error(f"[KG Evaluator] JSON parsing failed: {json_e}")
+            return False
+            
     except Exception as e:
         logger.error(f"[KG Evaluator] Error: {e}")
         return False
