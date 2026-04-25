@@ -1,0 +1,6 @@
+- [x] `AgentState` contains a `messages` list to track conversation history.
+- [x] Tools are correctly formatted and passed to the LLM API using the `tools` parameter.
+- [x] `manager_node` correctly handles responses with and without `tool_calls`.
+- [x] `worker_node` correctly processes `tool_calls`, executes the corresponding tools, and formats the results with `role: "tool"` and `tool_call_id`.
+- [x] The workflow successfully routes back to the `manager_node` after tool execution to generate a final response.
+- [x] Custom `MANAGER_SCHEMA` and JSON parsing logic for tasks are removed.
