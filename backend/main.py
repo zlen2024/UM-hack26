@@ -18,6 +18,8 @@ from routes import (
     whatsapp,
     privacy,
     telegram,
+    chat_memory,
+    business_background,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
@@ -164,6 +166,8 @@ app.include_router(
 app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["whatsapp"])
 app.include_router(telegram.router, prefix="/api/telegram", tags=["telegram"])
 app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
+app.include_router(chat_memory.router, prefix="/api/chat-memory", tags=["chat_memory"])
+app.include_router(business_background.router, prefix="/api/business-background", tags=["business_background"])
 
 
 @app.get("/")

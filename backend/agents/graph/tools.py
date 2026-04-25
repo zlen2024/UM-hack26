@@ -131,6 +131,15 @@ class ListActivitiesInput(BaseModel):
 class GetDashboardInput(BaseModel):
     user_id: int = Field(default=1, description="The user ID for the dashboard")
 
+class SaveChatMessageInput(BaseModel):
+    session_id: str = Field(description="The unique session ID for the chat")
+    role: str = Field(description="Role of the message sender: 'user', 'assistant', 'system', or 'tool'")
+    content: str = Field(description="Content of the message")
+    contact_id: Optional[int] = Field(default=None, description="Optional contact ID associated with the message")
+
+class GetChatHistoryInput(BaseModel):
+    session_id: str = Field(description="The unique session ID for the chat")
+    limit: Optional[int] = Field(default=50, description="Maximum number of messages to retrieve")
 
 # ============ Tool Implementations ============
 
@@ -655,6 +664,55 @@ def get_dashboard(user_id: int = 1) -> str:
         return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
 
 
+@tool("save_chat_message", args_schema=SaveChatMessageInput)
+def save_chat_message(session_id: str, role: str, content: str, contact_id: Optional[int] = None) -> str:
+    """Save a chat message to memory. Used for tracking conversational context."""
+    from agents.memory import save_message
+    try:
+        actual_user_id = UserContext.get_user_id() or 1
+        db: Session = get_db_session()
+        try:
+            msg = save_message(
+                db=db,
+                session_id=session_id,
+                role=role,
+                content=content,
+                user_id=actual_user_id,
+                contact_id=contact_id
+            )
+            return json.dumps({
+                "success": True,
+                "message_id": msg.id,
+                "message": "Chat message saved successfully"
+            })
+        finally:
+            db.close()
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+
+
+@tool("get_chat_history", args_schema=GetChatHistoryInput)
+def get_chat_history(session_id: str, limit: int = 50) -> str:
+    """Get the recent chat history for a given session."""
+    from agents.memory import get_history
+    try:
+        db: Session = get_db_session()
+        try:
+            messages = get_history(db, session_id, limit=limit)
+            return json.dumps({
+                "success": True,
+                "messages": [{
+                    "role": m.role,
+                    "content": m.content,
+                    "created_at": m.created_at.isoformat()
+                } for m in messages]
+            })
+        finally:
+            db.close()
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+
+
 # ============ Export All Tools ============
 
 CRM_TOOLS = [
@@ -673,4 +731,6 @@ CRM_TOOLS = [
     create_activity,
     list_activities,
     get_dashboard,
+    save_chat_message,
+    get_chat_history,
 ]

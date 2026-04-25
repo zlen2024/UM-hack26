@@ -79,10 +79,32 @@ def should_use_tools(state: AgentState) -> str:
 def agent_node(state: AgentState) -> dict:
     """Main agent node using LLM."""
     messages = state.get("messages", [])
+    user_id = state.get("user_id", 1)
     
-    api_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # Load business context
+    from agents.business_context import get_active
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        active_bgs = get_active(db, user_id)
+        bg_text = ""
+        if active_bgs:
+            bg_text = "\n\nBusiness Context:\n" + "\n".join(
+                [f"[{bg.category}] {bg.title}: {bg.content}" for bg in active_bgs]
+            )
+    finally:
+        db.close()
+    
+    system_content = SYSTEM_PROMPT + bg_text
+    api_messages = [{"role": "system", "content": system_content}]
+    
     for msg in messages:
-        role = "user" if msg.type == "human" else "assistant"
+        if msg.type == "human":
+            role = "user"
+        elif msg.type == "system":
+            role = "system"
+        else:
+            role = "assistant"
         api_messages.append({"role": role, "content": msg.content})
     
     # Get tool definitions
@@ -185,10 +207,33 @@ app = get_app()
 
 def run_agent(message: str, user_id: int = 1, thread_id: Optional[str] = None) -> dict:
     """Run the CRM agent with a message."""
+    import uuid
+    from database import SessionLocal
+    from agents.memory import save_message, get_history
+    
+    session_id = thread_id or str(uuid.uuid4())
+    db = SessionLocal()
+    
     try:
+        # Load chat history
+        db_history = get_history(db, session_id, limit=50)
+        history_messages = []
+        for msg in db_history:
+            if msg.role == "user":
+                history_messages.append(("user", msg.content))
+            elif msg.role == "assistant":
+                history_messages.append(("assistant", msg.content))
+            elif msg.role == "system":
+                history_messages.append(("system", msg.content))
+        
+        # Save user message
+        save_message(db, session_id, "user", message, user_id=user_id)
+        
+        history_messages.append(("user", message))
+        
         graph = get_app()
         result = graph.invoke({
-            "messages": [("user", message)],
+            "messages": history_messages,
             "user_id": user_id,
             "extracted_args": None,
             "tool_results": [],
@@ -222,10 +267,14 @@ def run_agent(message: str, user_id: int = 1, thread_id: Optional[str] = None) -
             else:
                 response_text = "I'll help you with that."
         
+        # Save agent response
+        save_message(db, session_id, "assistant", response_text, user_id=user_id)
+        
         return {
             "success": True,
             "response": response_text,
             "user_id": user_id,
+            "thread_id": session_id,
         }
     except Exception as e:
         return {
@@ -233,7 +282,10 @@ def run_agent(message: str, user_id: int = 1, thread_id: Optional[str] = None) -
             "error": str(e),
             "response": "I'm here to help! What would you like to do?",
             "user_id": user_id,
+            "thread_id": session_id,
         }
+    finally:
+        db.close()
 
 
 client = openai_client
