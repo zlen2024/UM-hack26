@@ -115,3 +115,83 @@ export const googleCalendar = {
     api.put(`/google-calendar/calendar/${id}`, data),
   deleteCalendar: (id: string) => api.delete(`/google-calendar/calendar/${id}`),
 };
+
+export const gmail = {
+  status: () => api.get('/gmail/status'),
+  startWatch: () => api.post('/gmail/start-watch'),
+  stopWatch: () => api.post('/gmail/stop-watch'),
+  renewWatch: () => api.post('/gmail/renew-watch'),
+};
+
+export const emails = {
+  list: (params?: any) => api.get('/emails', { params }),
+  get: (id: number) => api.get(`/emails/${id}`),
+  markAsRead: (id: number) => api.post(`/emails/${id}/read`),
+  sync: () => api.post('/emails/sync'),
+};
+
+export const whatsapp = {
+  getConfig: (phone_number_id: string) =>
+    api.get(`/whatsapp/config/${phone_number_id}`),
+  createConfig: (data: {
+    phone_number_id: string;
+    display_phone_number: string;
+    access_token: string;
+    app_secret?: string;
+    verify_token: string;
+    user_id: number;
+  }) => api.post('/whatsapp/config', data),
+  status: () => api.get('/whatsapp/status'),
+};
+export const telegram = {
+  getConfig: (bot_token: string) =>
+    api.get(`/telegram/config/${bot_token}`),
+  createConfig: (data: {
+    bot_token: string;
+    user_id: number;
+    webhook_url: string;
+  }) => api.post('/telegram/config', data),
+};
+
+export const chatery = {
+  connect: (data: { user_id: number; webhook_url: string }) =>
+    api.post('/chatery/connect', data),
+  disconnect: (data: { user_id: number; webhook_url: string }) =>
+    api.post('/chatery/disconnect', data),
+  status: (userId: number) => api.get(`/chatery/status/${userId}`),
+  qr: (userId: number) => api.get(`/chatery/qr/${userId}`),
+};
+
+export const chatMemory = {
+  getHistory: (sessionId: string, limit?: number) => 
+    api.get(`/chat-memory/${sessionId}`, { params: { limit } }),
+};
+
+export const businessBackground = {
+  list: (query?: string) => api.get('/business-background', { params: { query } }),
+  getActive: () => api.get('/business-background/active'),
+  create: (data: any) => api.post('/business-background', data),
+  update: (id: number, data: any) => api.put(`/business-background/${id}`, data),
+  delete: (id: number) => api.delete(`/business-background/${id}`),
+};
+
+export const businessRules = {
+  get: () => api.get('/business-rules'),
+  update: (data: { rules_text: string }) => api.put('/business-rules', data),
+};
+
+export const chatMessages = {
+  list: () => api.get('/messages'),
+};
+
+export const kg = {
+  getGraph: () => api.get('/graph'),
+  addNode: (data: { id: string; label: string; properties: string }) => api.post('/node', data),
+  updateNode: (data: { id: string; label: string; properties: string }) => api.put('/node', data),
+  deleteNode: (id: string) => api.delete(`/node/${id}`),
+  addEdge: (data: { source: string; target: string; type: string; properties: string }) => api.post('/edge', data),
+  updateEdge: (data: { source: string; target: string; type: string; properties: string }) => api.put('/edge', data),
+  deleteEdge: (source: string, target: string, type: string) => 
+    api.delete('/edge', { params: { source, target, type } }),
+};
+

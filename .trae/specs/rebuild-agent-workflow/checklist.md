@@ -1,0 +1,6 @@
+- [x] State definition includes `user_input`, `gatekeeper_response`, `manager_response`, `current_tasks`, `worker_error`.
+- [x] Gatekeeper node correctly outputs strict JSON (`response`, `agent_loop`, `query`) and routes to END or Manager.
+- [x] Manager node correctly outputs strict JSON (`task`, `response`, `knowledge`) and routes to END or Worker.
+- [x] Worker node sequentially executes tasks and breaks on failure, passing the error back to the Manager.
+- [x] System uses `with_structured_output` for LLM calls with temperature set to 0.
+- [x] Mock tools (`verify_order`, `check_payment_status`) are provided for testing cyclic fallback logic.

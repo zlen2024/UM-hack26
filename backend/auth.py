@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -8,8 +9,11 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import User
 from schemas import UserResponse
+from dotenv import load_dotenv
 
-SECRET_KEY = "um-crm-secret-key-change-in-production"
+load_dotenv()
+
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "um-crm-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7

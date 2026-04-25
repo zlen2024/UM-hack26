@@ -1,0 +1,2720 @@
+diff --git a/.trae/documents/fix_401_kg_nodes.md b/.trae/documents/fix_401_kg_nodes.md
+new file mode 100644
+index 0000000..e907bff
+--- /dev/null
++++ b/.trae/documents/fix_401_kg_nodes.md
+@@ -0,0 +1,34 @@
++# Plan: Fix 401 Unauthorized Error in Knowledge Graph Agents
++
++## Summary
++The `information_extractor_node` and `cypher_generator_node` in `kg_nodes.py` are throwing a `401 Unauthorized` error when called, because they are attempting to use the incorrect `OPENAI_API_BASE` (`https://stg-api.ilmu.ai/v1`) and a fallback `OPENAI_API_KEY` (`demo-key`) instead of the working `ILMU_API_KEY` configuration that the rest of the application uses.
++
++## Current State Analysis
++When the Manager triggers the Knowledge Graph extraction loop, the application routes to `information_extractor_node`. Inside `kg_nodes.py`, the `_get_openai_client` function was previously patched to use `api_key = os.getenv("ILMU_API_KEY", os.getenv("OPENAI_API_KEY", ""))`, but the user reverted this patch during the last interaction due to a hallucination incident. Therefore, `kg_nodes.py` currently looks like this:
++```python
++def _get_openai_client():
++    from openai import OpenAI
++    return OpenAI(
++        base_url=os.getenv("OPENAI_API_BASE", "https://stg-api.ilmu.ai/v1"),
++        api_key=os.getenv("OPENAI_API_KEY", "demo-key"),
++    )
++```
++This fails to authenticate because `OPENAI_API_KEY` is missing in the production environment, causing it to fall back to `"demo-key"`, while `cs_agent.py` successfully authenticates using `ILMU_API_KEY`.
++
++## Proposed Changes
++
++### `backend/agents/kg_nodes.py`
++**What:** Import and reuse the `get_ilmu_client()` function from `cs_agent.py` instead of redefining `_get_openai_client()`.
++**Why:** To enforce a single source of truth for LLM API authentication and avoid environment variable mismatch bugs entirely.
++**How:**
++1. In `kg_nodes.py`, replace `def _get_openai_client(): ...` with `from .cs_agent import get_ilmu_client`.
++2. In `information_extractor_node`, change `_get_openai_client().chat.completions.create` to `get_ilmu_client().chat.completions.create`.
++3. In `cypher_generator_node`, change `_get_openai_client().chat.completions.create` to `get_ilmu_client().chat.completions.create`.
++
++## Assumptions & Decisions
++- Reusing `get_ilmu_client` ensures that if the base URL or API key environment variables ever change in the future, both files will automatically use the updated configuration.
++- The `ilmu-mini-1.0` model hardcoded in `kg_nodes.py` will remain unchanged as per the user's explicit request to undo previous modifications to it.
++
++## Verification Steps
++- Run `python3 -m py_compile backend/agents/kg_nodes.py` to ensure syntax is valid.
++- Send a message that triggers the KG to ensure the `401 Unauthorized` error no longer occurs.
+\ No newline at end of file
+diff --git a/.trae/documents/fix_jsondecodeerror_gatekeeper.md b/.trae/documents/fix_jsondecodeerror_gatekeeper.md
+new file mode 100644
+index 0000000..37e061c
+--- /dev/null
++++ b/.trae/documents/fix_jsondecodeerror_gatekeeper.md
+@@ -0,0 +1,26 @@
++# Plan: Fix JSONDecodeError in Gatekeeper Node
++
++## Summary
++Investigate and resolve the `JSONDecodeError` in the `gatekeeper_node` without modifying the user's `response_format` schemas or environment variable configurations in other files.
++
++## Current State Analysis
++The Gatekeeper node in `cs_agent.py` throws a `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`. This occurs because the LLM (`ilmu-glm-5.1`) returns plain conversational text instead of the requested JSON schema.
++Using the `bug-hunter` skill, the root cause was identified: `gatekeeper_node` directly appends `state.get("messages", [])` (the raw conversation history) into the API `messages` array. When the model sees previous `{"role": "assistant", "content": "..."}` messages, it assumes it is participating in an ongoing natural conversation and ignores the `Output: {...}` JSON structure defined in the system prompt's few-shot examples.
++
++## Proposed Changes
++
++### `backend/agents/cs_agent.py`
++**What:** Modify how conversation history is passed to the Gatekeeper.
++**Why:** To provide the Gatekeeper with conversation context (for resolving coreferences like "yes, do it") without breaking its JSON output format.
++**How:**
++1. Remove the loop that appends `state.get("messages", [])` directly to `messages_for_gatekeeper`.
++2. Format the history into a structured text block (e.g., `Customer: ... \n Agent: ...`).
++3. Append this text block to the `system_prompt` under a `=== RECENT CONVERSATION HISTORY ===` header.
++4. Format the final user message to exactly match the few-shot examples (`Input: "{user_input}"`).
++
++## Assumptions & Decisions
++- The user specifically requested to undo my previous changes to `response_format` and `kg_nodes.py`. Those files/lines will remain strictly untouched.
++- The `ilmu-glm-5.1` model correctly supports `{"type": "json_schema"}` as long as the prompt format isn't corrupted by conversational `assistant` messages.
++
++## Verification Steps
++- Trigger a multi-turn conversation with the Gatekeeper to ensure it successfully outputs JSON and routes to the agent loop without raising a `JSONDecodeError`.
+\ No newline at end of file
+diff --git a/.trae/documents/plan_active_kg_query.md b/.trae/documents/plan_active_kg_query.md
+new file mode 100644
+index 0000000..5a18449
+--- /dev/null
++++ b/.trae/documents/plan_active_kg_query.md
+@@ -0,0 +1,42 @@
++# Plan to Implement Active Knowledge Graph Querying
++
++## Summary
++The user asked: *"do we had an agent that will do query knowledge graph rn..?..we need to actively qerying knowledge graph to improve connection and context with customer..do you think we need it to be parse directly after get new message"*
++
++Based on the logs and the current architecture in `backend/agents/cs_agent.py`:
++- We do **not** have an agent that actively queries the Knowledge Graph before formulating a response.
++- The `manager_node` currently only has access to general CRM tools (create contact, opportunity, etc.) via `CRM_TOOLS`.
++- The Knowledge Graph tools (like `query_knowledge_graph` inside `backend/agents/graph/tools.py`) exist but are only exposed to the generic `/api/chat` router (in `backend/routes/kg.py`), not to the primary WhatsApp/Telegram chat flows (`cs_agent.py`).
++- When the user asks "what belantik do..?", the Manager agent times out or fails to answer effectively because it lacks the specific context from the Knowledge Graph.
++
++To fix this, we should **inject the Knowledge Graph context directly into the Manager node** before it decides how to respond. Instead of relying on the LLM to randomly guess when to use a "query" tool, it is much faster and more reliable to do a **semantic or direct Cypher search** on the Knowledge Graph based on the user's input, and inject those findings directly into the `Manager`'s prompt (similar to how we injected `business_context`).
++
++## Current State Analysis
++- The user's input triggers the `gatekeeper_node` which decides to loop to the `manager_node`.
++- The `manager_node` receives the `user_id`, `contact_name`, `business_context`, and `business_rules`, but **no Knowledge Graph data**.
++- We have a `KnowledgeDBFactory` in `backend/knowledge_db.py` that can access the user's graph database.
++
++## Proposed Changes
++
++### 1. Enhance `knowledge_db.py` for Context Retrieval
++- Add a new method `get_relevant_context(self, text: str)` to the `KnowledgeDB` class.
++- This method will use a simple, fast approach to find relevant nodes/edges:
++  - Extract potential keywords from the `text` (e.g., using a simple regex or splitting by words, ignoring stop words).
++  - Run a Cypher query like `MATCH (n:Entity) WHERE n.id CONTAINS 'keyword' OR n.label CONTAINS 'keyword' RETURN n.id, n.label, n.properties LIMIT 5`.
++  - Also fetch related edges: `MATCH (a:Entity)-[r:RelatedTo]->(b:Entity) WHERE a.id CONTAINS 'keyword' RETURN a.id, type(r), b.id LIMIT 5`.
++  - Format this into a readable string (e.g., "Known Fact: X is RELATED_TO Y").
++
++### 2. Inject KG Context into `manager_node`
++- In `backend/agents/cs_agent.py`, right before executing the `manager_node` LLM call:
++  - Retrieve the user's Knowledge Graph instance via `KnowledgeDBFactory.get_instance(user_id)`.
++  - Call `get_relevant_context(user_input)`.
++  - Append the resulting text as `=== CUSTOMER KNOWLEDGE GRAPH ===` to the `system_prompt`.
++
++## Assumptions & Decisions
++- Injecting relevant KG data directly into the prompt is much more efficient than forcing the Manager LLM to figure out how to write and execute a Cypher query tool mid-conversation.
++- We will use simple keyword matching in Cypher for now to ensure speed and reliability. If advanced vector search is needed later, it can be added to `get_relevant_context`.
++
++## Verification Steps
++- Ask a question related to an entity stored in the Knowledge Graph (e.g., "what belantik do?").
++- Verify in the logs that `Manager Input Context` includes the extracted Knowledge Graph facts.
++- Verify the AI responds correctly using that knowledge.
+\ No newline at end of file
+diff --git a/.trae/documents/plan_add_business_info_rules.md b/.trae/documents/plan_add_business_info_rules.md
+new file mode 100644
+index 0000000..1679d24
+--- /dev/null
++++ b/.trae/documents/plan_add_business_info_rules.md
+@@ -0,0 +1,42 @@
++# Plan to Add Business Information and Rules to Agent Prompts
++
++## Summary
++The user requested that the "business information" (which maps to the existing `BusinessBackground` table) and a new "business rules" table be injected directly into the system prompts of the `gatekeeper` and `manager` nodes. This ensures that both nodes have the complete business context and operational rules to process customer queries accurately.
++
++## Current State Analysis
++- The `BusinessBackground` table exists in `backend/models.py` but is currently only injected into `agent_node` in `backend/agents/graph/agent.py`. It is completely missing from the `gatekeeper` and `manager` nodes in `backend/agents/cs_agent.py`.
++- There is no table or model for "Business Rules".
++- The `gatekeeper` and `manager` prompts are currently static and only take `user_id` and `contact_name` as context.
++
++## Proposed Changes
++
++### 1. Add `BusinessRule` Model (`backend/models.py`)
++- Define a new SQLAlchemy model `BusinessRule` with columns: `id`, `user_id` (unique), `rules_text` (Text), `created_at`, `updated_at`.
++- Link it to the `User` model. This will store all business rules as a single prompt/text block per user.
++
++### 2. Create Data Access Layer (`backend/agents/business_context.py`)
++- Add helper functions `get_business_rule(db, user_id)` and `update_business_rule(db, user_id, text)` to manage the single business rule record.
++
++### 3. Create API Routes for Business Rules (`backend/routes/business_rules.py` & `backend/main.py`)
++- Create endpoints (`GET /api/business-rules`, `PUT /api/business-rules`) so users can view and edit their single block of business rules from the frontend.
++- Register the new router in `backend/main.py`.
++
++### 4. Inject Context into Agent Prompts (`backend/agents/cs_agent.py`)
++- Update `gatekeeper_node` and `manager_node`:
++  - Open a database session using `SessionLocal()`.
++  - Fetch active `BusinessBackground` entries using `get_active()`.
++  - Fetch the single `BusinessRule` entry using `get_business_rule()`.
++  - Handle cases where there is no data in the DB gracefully (e.g., if `get_active()` or `get_business_rule()` return empty/None, simply do not append that block to the prompt).
++  - Format the data into text blocks (e.g., `=== BUSINESS INFORMATION ===` and `=== BUSINESS RULES ===`).
++  - Append these text blocks to the `system_prompt` strings of both the Gatekeeper and Manager LLMs.
++  - Close the database session safely using a `try...finally` block.
++
++## Assumptions & Decisions
++- The `BusinessBackground` data will only include active entries (`is_active == True`).
++- The Business Rules will be a single text column per user so they can free-form type their closing deals and policies.
++- The `Base.metadata.create_all(bind=engine)` in `main.py` will automatically create the new `business_rules` table when the app restarts.
++
++## Verification Steps
++- Start the backend server and ensure no database errors occur (table is created).
++- Test adding a Business Rule via the new API endpoint.
++- Trigger a chat message and verify in the logs that the `gatekeeper` and `manager` nodes successfully receive the business context and rules in their system prompts.
+\ No newline at end of file
+diff --git a/.trae/documents/plan_fix_kg_eval_lang.md b/.trae/documents/plan_fix_kg_eval_lang.md
+new file mode 100644
+index 0000000..17a6ee1
+--- /dev/null
++++ b/.trae/documents/plan_fix_kg_eval_lang.md
+@@ -0,0 +1,48 @@
++# Plan to Investigate and Fix Manager Logic (Language and KG Extraction)
++
++## Summary
++The user tested the chat flow with a message combining English and Malay (`"hey.. i love ikan.. and also i had a sister name farhana... by the way my name is hakimi.. so what is my full name,, take a guest.."`).
++The logs show:
++1. The Gatekeeper correctly parsed the input, triggering the agent loop.
++2. The Manager executed, outputted 0 tool calls.
++3. The `evaluate_kg_trigger` ran and correctly resolved the bug we fixed earlier. However, it evaluated to `False`, meaning the Knowledge Graph (KG) extraction was skipped.
++4. The user also questioned why the system responds in Malay (`"hye.. apa khabar"`).
++
++### Issues to Fix:
++1. **KG Evaluator Logic**: The `evaluate_kg_trigger` relies on the fast model (`ilmu-glm-5.1`) with a strict prompt expecting a `YES` or `NO`. The prompt is currently entirely in English. If the user input contains Malay words ("ikan"), the fast model might fail to recognize the intent or format its output strictly, leading to a `False` evaluation.
++2. **Language Handling**: The Manager LLM is responding in Malay because the prompt doesn't strictly dictate the response language, and the `ilmu-glm-5.1` model might be adapting to the user's language ("hye.. apa khabar" in previous tests).
++3. **Observability**: The user requested extra logs to understand the system's reasoning.
++
++## Current State Analysis
++- In `backend/agents/cs_agent.py`, `evaluate_kg_trigger` sends the prompt and checks if `"YES"` is in the output. If the model responds in Malay ("YA"), it fails.
++- There is minimal logging of what the LLM actually returns in `evaluate_kg_trigger` before we check for `"YES"`.
++- The `manager_node` system prompt does not specify a language rule.
++
++## Proposed Changes
++
++### 1. Enhance Logging (Observability)
++- **File**: `backend/agents/cs_agent.py`
++- **What**: Add detailed `logger.info` statements.
++- **How**: 
++  - Inside `evaluate_kg_trigger`: Log the exact text sent to the evaluator and the exact raw output from the LLM before stripping it.
++  - Inside `manager_node`: Log the raw content of the assistant's response.
++
++### 2. Fix `evaluate_kg_trigger` Language and Logic
++- **File**: `backend/agents/cs_agent.py`
++- **What**: Make the prompt robust against mixed languages and log its output.
++- **How**: Update the prompt to explicitly state: "Regardless of the language of the text, you MUST respond with ONLY the English word 'YES' or 'NO'." Also, log the `content` variable so we can see what the model actually decided.
++
++### 3. Enforce Response Language in Manager
++- **File**: `backend/agents/cs_agent.py`
++- **What**: Update the `manager_node` system prompt.
++- **How**: Add a Conversation Rule: "Always respond in the same language the user is speaking. If they use mixed languages (e.g., English and Malay), respond in English by default unless they explicitly request otherwise."
++
++## Assumptions & Decisions
++- The `ilmu-glm-5.1` model is highly capable but might get confused by mixed-language prompts if not given strict constraints.
++- Adding `logger.info` statements will not impact performance but will greatly aid debugging.
++
++## Verification Steps
++- Start the backend server.
++- Send the exact same test message ("hey.. i love ikan..").
++- Verify in the console logs that `[KG Evaluator] Raw Output:` is printed and shows `YES`.
++- Verify the AI responds appropriately in the desired language.
+\ No newline at end of file
+diff --git a/.trae/documents/plan_fix_kg_retrieval.md b/.trae/documents/plan_fix_kg_retrieval.md
+new file mode 100644
+index 0000000..8d4471b
+--- /dev/null
++++ b/.trae/documents/plan_fix_kg_retrieval.md
+@@ -0,0 +1,43 @@
++# Plan to Fix Knowledge Graph Context Retrieval
++
++## Summary
++The user tested the updated chat flow: `"hey.. i love ikan.. and also i had a sister name farhana... by the way my name is hakimi.. so what is my full name,, take a guest.."`.
++The logs show that the Manager successfully executed and provided a response, but it still couldn't guess the user's full name because it didn't have the context.
++Furthermore, the `[KG Evaluator]` ran after the Manager, and its output was `Raw Output: None`, resulting in `[Manager] Evaluated KG trigger: False`. 
++
++This means two things are failing:
++1. The **Active Knowledge Graph Context Retrieval** (`get_relevant_context`) is not finding or returning the previously saved facts (like the user's full name) before the Manager runs.
++2. The **KG Evaluator** (`ilmu-glm-5.1`) is still returning `None` instead of evaluating the new facts ("ikan", "farhana", "hakimi").
++
++## Current State Analysis
++- **Active Retrieval**: In `backend/knowledge_db.py`, `get_relevant_context` tries to find words longer than 3 characters (`\w{4,}`). It runs Cypher queries like `MATCH (n:Entity) WHERE lower(n.id) CONTAINS 'keyword'`. If the database is empty or the keywords don't match exactly, it returns an empty string. We need to log what it's searching for and finding.
++- **KG Evaluator**: In `backend/agents/cs_agent.py`, the `ilmu-glm-5.1` model returns `None`. This often happens if the `max_tokens` is set too low (currently `10`). Some models fail completely if they calculate they can't fit their preamble and answer in 10 tokens.
++
++## Proposed Changes
++
++### 1. Fix KG Evaluator Token Limit and JSON Output
++- **File**: `backend/agents/cs_agent.py`
++- **What**: Change `evaluate_kg_trigger` to use strict JSON mode and increase token limits.
++- **How**: 
++  - Change `max_tokens=10` to `max_tokens=2000`.
++  - Update the prompt to output a valid JSON object: `{"trigger": true}` or `{"trigger": false}`.
++  - Add `response_format={"type": "json_object"}` to the OpenAI API call.
++  - Parse the JSON response securely.
++
++### 2. Improve Active Context Retrieval & Logging
++- **File**: `backend/knowledge_db.py` and `backend/agents/cs_agent.py`
++- **What**: Add logging to see what keywords are being searched, and improve the keyword extraction to catch names (even if they are 3 letters).
++- **How**: 
++  - Change regex to `\w{3,}` to catch 3-letter names (e.g., "Ali", "Abu").
++  - Add `print()` or `logger.info()` statements inside `get_relevant_context` to log the keywords found and the number of facts retrieved.
++  - Ensure the `kg_context` is properly formatted and logged in `cs_agent.py` before being passed to the Manager.
++
++## Assumptions & Decisions
++- The `ilmu-glm-5.1` model returning `None` is highly likely a token limitation issue or strict API constraint. Increasing `max_tokens` is a safe fix.
++- The active retrieval might be failing simply because the data wasn't saved in the previous step (because the KG Evaluator failed). Once the evaluator is fixed, the data will save, and subsequent retrievals will succeed.
++
++## Verification Steps
++- Apply the fixes.
++- Send the message again.
++- Verify in the logs that `[KG Evaluator] Raw Output` now shows `YES`.
++- Check the backend logs to see what keywords `get_relevant_context` searches for.
+\ No newline at end of file
+diff --git a/.trae/documents/plan_fix_kg_trigger_bug.md b/.trae/documents/plan_fix_kg_trigger_bug.md
+new file mode 100644
+index 0000000..da5b45e
+--- /dev/null
++++ b/.trae/documents/plan_fix_kg_trigger_bug.md
+@@ -0,0 +1,45 @@
++# Plan to Fix Knowledge Graph Trigger Evaluation Bug
++
++## Summary
++The user provided a log trace showing a failure during the execution of the Customer Service Agent workflow:
++```
++[KG Evaluator] Error: 'NoneType' object has no attribute 'strip'
++[Manager] Evaluated KG trigger: False
++```
++This error occurred right after the `manager_node` finished executing and attempted to evaluate whether to trigger the Knowledge Graph (KG) extraction via `evaluate_kg_trigger`. 
++
++## Current State Analysis
++In `backend/agents/cs_agent.py`, the `evaluate_kg_trigger` function calls the LLM to determine if the text contains important customer details. It expects the LLM to return `'YES'` or `'NO'`. 
++The code currently does this:
++```python
++        response = client.chat.completions.create(
++            model="ilmu-glm-5.1", # Fast model
++            messages=[{"role": "user", "content": prompt}],
++            temperature=0.0,
++            max_tokens=10,
++        )
++        content = response.choices[0].message.content.strip().upper()
++```
++If the LLM returns an empty message or the API response doesn't properly format the `content` field, `response.choices[0].message.content` is `None`. Calling `.strip()` on `None` throws the `'NoneType' object has no attribute 'strip'` error.
++
++## Proposed Changes
++
++### 1. Fix `evaluate_kg_trigger` Error Handling
++- **File**: `backend/agents/cs_agent.py`
++- **What**: Update the parsing logic in `evaluate_kg_trigger` to safely handle `None` content.
++- **How**: 
++  ```python
++        content = response.choices[0].message.content
++        if not content:
++            return False
++        content = content.strip().upper()
++        return "YES" in content
++  ```
++
++## Assumptions & Decisions
++- The `ilmu-glm-5.1` API might occasionally return an empty response (`content = None`) for very short max_tokens or edge cases, so safe extraction is necessary.
++
++## Verification Steps
++- Deploy or run the backend.
++- Send a message that shouldn't trigger the KG or might cause an empty response.
++- Verify in the logs that the `[KG Evaluator] Error` no longer appears and it safely evaluates to `False`.
+\ No newline at end of file
+diff --git a/.trae/specs/add-knowledge-graph-agents/checklist.md b/.trae/specs/add-knowledge-graph-agents/checklist.md
+new file mode 100644
+index 0000000..561550a
+--- /dev/null
++++ b/.trae/specs/add-knowledge-graph-agents/checklist.md
+@@ -0,0 +1,5 @@
++- [x] Graph database initializes correctly with `Entity` and `RelatedTo` tables without errors.
++- [x] Information Extractor Agent successfully parses complex sentences into JSON with correct DSNF mapping.
++- [x] Cypher Generator Agent produces valid `MERGE` queries and avoids database duplication.
++- [x] Manager node successfully detects relevant inputs and triggers the knowledge graph pipeline.
++- [x] FastAPI endpoints correctly serve the chat interaction and graph data.
+diff --git a/.trae/specs/add-knowledge-graph-agents/spec.md b/.trae/specs/add-knowledge-graph-agents/spec.md
+new file mode 100644
+index 0000000..aabac74
+--- /dev/null
++++ b/.trae/specs/add-knowledge-graph-agents/spec.md
+@@ -0,0 +1,35 @@
++# Add Knowledge Graph Agents Spec
++
++## Why
++The customer service (CS) system needs to extract structured information (like customer preferences, sales strategies, or key facts) from customer interactions to build a persistent knowledge graph. This enables the system to maintain long-term context and improve personalized responses. 
++
++## What Changes
++- Add an **Information Extractor Agent** node to parse user text into entities and relationships using Dependency Syntactic Normal Forms (DSNFs).
++- Add a **Cypher Generator Agent** node to convert the extracted JSON data into valid Cypher queries (using `MERGE` statements).
++- Integrate a Graph Database (e.g., LadybugDB or Neo4j) to store the extracted nodes and edges safely.
++- Update the **Manager Node** in the LangGraph workflow to detect useful customer input and route it to the knowledge graph extraction pipeline.
++- Implement FastAPI endpoints (`/api/chat`, `/api/graph`) to handle the knowledge extraction flow and visualize the graph.
++
++## Impact
++- Affected specs: Agent workflow (LangGraph topology), Context Management.
++- Affected code: Manager/Router node logic, graph database module, API routes, LLM prompt templates.
++
++## ADDED Requirements
++### Requirement: Information Extractor Agent
++The system SHALL extract entities and relationships from customer interactions using strict DSNF rules, returning structured JSON.
++#### Scenario: Success case
++- **WHEN** the manager node identifies a useful customer input and routes to the extractor
++- **THEN** the Information Extractor Agent processes it and outputs structured JSON (nodes and edges) without duplication.
++
++### Requirement: Cypher Generator Agent
++The system SHALL convert structured JSON from the extractor into valid Cypher queries and execute them against the graph database.
++#### Scenario: Success case
++- **WHEN** the Cypher Generator Agent receives valid JSON nodes and edges
++- **THEN** it generates Cypher `MERGE` statements and executes them, storing the entities and relationships safely in the database.
++
++## MODIFIED Requirements
++### Requirement: Manager Node Routing
++The manager node SHALL evaluate customer input and trigger the knowledge graph pipeline when appropriate.
++#### Scenario: Important Context Detected
++- **WHEN** the customer shares preferences or a closing sales strategy
++- **THEN** the manager node routes the input to the knowledge graph extraction nodes in addition to the standard response flow.
+diff --git a/.trae/specs/add-knowledge-graph-agents/tasks.md b/.trae/specs/add-knowledge-graph-agents/tasks.md
+new file mode 100644
+index 0000000..4a6b5b3
+--- /dev/null
++++ b/.trae/specs/add-knowledge-graph-agents/tasks.md
+@@ -0,0 +1,21 @@
++# Tasks
++- [x] Task 1: Initialize Graph Database Connection
++  - [x] SubTask 1.1: Setup graph database connection (e.g., LadybugDB).
++  - [x] SubTask 1.2: Create schema initialization function for `Entity` and `RelatedTo` tables.
++- [x] Task 2: Implement Information Extractor Agent (LangGraph Node)
++  - [x] SubTask 2.1: Create the prompt template using the provided DSNF rules.
++  - [x] SubTask 2.2: Implement the LLM invocation to extract nodes and edges as structured JSON.
++- [x] Task 3: Implement Cypher Generator Agent (LangGraph Node)
++  - [x] SubTask 3.1: Create the prompt template for converting JSON to Cypher `MERGE` queries.
++  - [x] SubTask 3.2: Implement the Cypher extraction and database execution logic.
++- [x] Task 4: Update Manager Node (LangGraph Router)
++  - [x] SubTask 4.1: Add evaluation logic to detect important customer details (preferences, strategies).
++  - [x] SubTask 4.2: Add conditional routing to trigger the extraction pipeline when necessary.
++- [x] Task 5: Implement API Endpoints
++  - [x] SubTask 5.1: Create `/api/chat` endpoint to test the extraction and conversational flow.
++  - [x] SubTask 5.2: Create `/api/graph` endpoint to fetch graph data for frontend visualization.
++
++# Task Dependencies
++- Task 2 and Task 3 depend on Task 1.
++- Task 4 depends on Task 2 and Task 3.
++- Task 5 depends on Task 2, Task 3, and Task 1.
+diff --git a/backend/agents/business_context.py b/backend/agents/business_context.py
+index 39c0685..a94c38f 100644
+--- a/backend/agents/business_context.py
++++ b/backend/agents/business_context.py
+@@ -3,7 +3,7 @@ import logging
+ from sqlalchemy.orm import Session
+ from sqlalchemy import asc, desc, or_
+ from typing import List, Optional, Dict, Any
+-from models import BusinessBackground
++from models import BusinessBackground, BusinessRule
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -76,3 +76,34 @@ def get_active(db: Session, user_id: int) -> List[BusinessBackground]:
+         BusinessBackground.user_id == user_id,
+         BusinessBackground.is_active == True
+     ).order_by(desc(BusinessBackground.priority)).all()
++
++def get_business_rule(db: Session, user_id: int) -> Optional[str]:
++    """Get the business rules text for a user."""
++    rule = db.query(BusinessRule).filter(BusinessRule.user_id == user_id).first()
++    if not rule or not rule.rules_text or not rule.rules_text.strip():
++        return None
++    return rule.rules_text
++
++def update_business_rule(db: Session, user_id: int, rules_text: Optional[str]) -> Optional[BusinessRule]:
++    """Create or update the business rule for a user."""
++    rule = db.query(BusinessRule).filter(BusinessRule.user_id == user_id).first()
++    
++    if not rules_text or not rules_text.strip():
++        if rule:
++            rule.rules_text = None
++            db.commit()
++            db.refresh(rule)
++        return None
++
++    if rule:
++        rule.rules_text = rules_text
++        db.commit()
++        db.refresh(rule)
++        return rule
++        
++    rule = BusinessRule(user_id=user_id, rules_text=rules_text)
++    db.add(rule)
++    db.commit()
++    db.refresh(rule)
++    return rule
++
+diff --git a/backend/agents/cs_agent.py b/backend/agents/cs_agent.py
+index c91b1c1..b761333 100644
+--- a/backend/agents/cs_agent.py
++++ b/backend/agents/cs_agent.py
+@@ -54,9 +54,14 @@ class AgentState(TypedDict, total=False):
+     user_input: str
+     user_id: int
+     contact_name: str
++    business_context: str
++    business_rules: str
+     gatekeeper_response: dict
+     messages: List[dict]
+     worker_error: str
++    extracted_kg_data: dict
++    executed_kg_queries: list
++    trigger_kg: bool
+ 
+ def format_tool_to_openai(tool) -> dict:
+     if hasattr(tool, "args_schema") and tool.args_schema:
+@@ -100,18 +105,47 @@ def gatekeeper_node(state: AgentState) -> dict:
+         }
+     
+     client = get_ilmu_client()
+-    system_prompt = f"""You are a highly efficient Customer Service Intent Router for a business. Your ONLY job is to analyze the user's input, determine if it requires complex backend processing, and route it accordingly. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
+-
+-RULES:
++    system_prompt = f"""You are an Intent Router and Context Detector for a customer service business.
++Your job is to analyze the user's input and determine if it should be routed to the main agent loop.
++Business User ID: {state.get('user_id')}
++Customer Name: {state.get('contact_name')}
++{state.get('business_context', '')}{state.get('business_rules', '')}
++=== STRICT RULES ===
+ 1. You MUST respond in strictly valid JSON format matching the schema: {{"response": "string", "agent_loop": boolean, "query": "string"}}.
+-2. If the user's input is a simple greeting, general chit-chat, or easily answerable without looking up systems, set "agent_loop" to false and provide a direct "response".
+-3. If the user's input requires checking orders, retrieving business data, troubleshooting, or anything complex, set "agent_loop" to true, extract the core intent into "query", AND provide a polite preliminary "response" (e.g., "Let me check that for you right away...")."""
++2. SET `agent_loop` = false ONLY IF the input is a brief, simple greeting (e.g., "hi", "thanks") with NO other actionable information. Provide a direct "response".
++3. SET `agent_loop` = true IF the input contains ANY of the following:
++   - Requests requiring system checks, tool usage, or complex answers.
++   - Personal details, preferences (e.g., likes/dislikes), or facts (e.g., "my name is...", "I love...").
++   - Business strategies, goals, or context that should be remembered.
++4. When `agent_loop` is true:
++   - For complex tasks, provide a polite preliminary "response" (e.g., "Let me check that for you...").
++   - For users sharing information/preferences, leave "response" empty ("") so the main agent can reply naturally.
++   - Extract the core intent or shared facts into the "query" field.
++
++=== FEW-SHOT EXAMPLES ===
++Input: "hello.. my name is Daniel... and i love ayam... but i hate sotong.."
++Output: {{"response": "", "agent_loop": true, "query": "User states their name is Daniel, they love ayam, and hate sotong."}}
++
++Input: "thanks for the help"
++Output: {{"response": "You're welcome! Let me know if you need anything else.", "agent_loop": false, "query": ""}}
++
++Input: "can you check my order status?"
++Output: {{"response": "Let me check that for you right away...", "agent_loop": true, "query": "check order status"}}"""
++
++    # Format history as a string to avoid confusing the assistant role
++    history_text = ""
++    for m in state.get("messages", []):
++        role = "Customer" if m["role"] == "user" else "Agent"
++        history_text += f"{role}: {m['content']}\n"
++        
++    if history_text:
++        system_prompt += f"\n=== RECENT CONVERSATION HISTORY ===\n{history_text}"
+ 
+     try:
+-        messages_for_gatekeeper = [{"role": "system", "content": system_prompt}]
+-        for m in state.get("messages", []):
+-            messages_for_gatekeeper.append(m)
+-        messages_for_gatekeeper.append({"role": "user", "content": state.get("user_input", "")})
++        messages_for_gatekeeper = [
++            {"role": "system", "content": system_prompt},
++            {"role": "user", "content": f'Input: "{state.get("user_input", "")}"'}
++        ]
+ 
+         response = client.chat.completions.create(
+             model="ilmu-glm-5.1",
+@@ -146,21 +180,86 @@ RULES:
+ 
+     return {"gatekeeper_response": result, "messages": new_messages}
+ 
++def evaluate_kg_trigger(text: str) -> bool:
++    """Evaluate if the text contains important customer details (preferences, strategies, etc.)."""
++    if not text:
++        return False
++    
++    prompt = f"""Analyze the following text and determine if it contains important customer details that should be extracted into a Knowledge Graph.
++
++=== IMPORTANT DETAILS INCLUDE ===
++- Personal preferences (e.g., likes, dislikes, favorite foods, favorite colors)
++- Identity facts (e.g., names, roles, relationships)
++- Business strategies, goals, or objectives
++- Significant personal or business facts (e.g., "I am the CEO", "We use AWS")
++
++=== EXAMPLES ===
++Text: "hello.. my name is Daniel... and i love ayam... but i hate sotong.."
++Response: YES
++
++Text: "can you check my order status?"
++Response: NO
++
++Text: "I prefer to be contacted via email."
++Response: YES
++
++Text: "thanks for your help"
++Response: NO
++
++=== TASK ===
++Text: "{text}"
++Regardless of the language of the text, you MUST output a valid JSON object with a single boolean field "trigger". 
++Output {{"trigger": true}} if the text contains important customer details. Output {{"trigger": false}} otherwise."""
++
++    try:
++        client = get_ilmu_client()
++        logger.info(f"[KG Evaluator] Sending prompt to model: {prompt}")
++        response = client.chat.completions.create(
++            model="ilmu-glm-5.1", # Fast model
++            messages=[{"role": "user", "content": prompt}],
++            temperature=0.0,
++            max_tokens=2000,
++            response_format={"type": "json_object"}
++        )
++        content = response.choices[0].message.content
++        logger.info(f"[KG Evaluator] Raw Output: {content}")
++        
++        if not content:
++            return False
++            
++        try:
++            result = parse_llm_json(content)
++            return result.get("trigger", False)
++        except Exception as json_e:
++            logger.error(f"[KG Evaluator] JSON parsing failed: {json_e}")
++            return False
++            
++    except Exception as e:
++        logger.error(f"[KG Evaluator] Error: {e}")
++        return False
++
+ def manager_node(state: AgentState) -> dict:
+     logger.info("--- [NODE: MANAGER] Executing ---")
+     client = get_ilmu_client()
+     
+-    system_prompt = f"""You are the Master Workflow Planner for a customer service business. You receive queries or system errors and must determine the exact sequence of tasks needed to resolve them. The ID of the business user is {state.get('user_id')}. The customer's name is {state.get('contact_name')}.
+-    
+-    CRITICAL INSTRUCTIONS FOR USING TOOLS:
+-    1. **Contact Management**: Use `list_contacts` FIRST to find if a customer exists before creating a new profile. Use `update_contact` to modify email, phone, or add notes from the conversation.
+-    2. **Support Tasks**: Use `create_task` to assign follow-up actions (e.g., check order status, process refund) to the team. Set `priority` and `due_date` appropriately.
+-    3. **Interaction Logging**: Always use `create_activity` to log the support interaction after resolving the customer's request. Associate it with `contact_id` if known.
+-
+-RULES:
+-1. If the query requires checking company policy, FAQs, or general information, or if you lack information from the user, respond directly to the user.
+-2. If the query requires executing actions, use the provided tools.
+-3. If previous tools were successful, provide the final response summarizing the outcome to the user."""
++    system_prompt = f"""You are the Master Workflow Planner and Conversational Agent for a customer service business.
++Business User ID: {state.get('user_id')}
++Customer Name: {state.get('contact_name')}
++{state.get('business_context', '')}{state.get('business_rules', '')}
++=== ROLE & OBJECTIVE ===
++You handle user queries, execute necessary backend tasks using tools, and maintain a polite, helpful conversation.
++
++=== TOOL USAGE RULES ===
++1. **Contact Management**: Use `list_contacts` FIRST to find if a customer exists before creating a new profile. Use `update_contact` to modify email, phone, or add notes.
++2. **Support Tasks**: Use `create_task` to assign follow-up actions to the team.
++3. **Interaction Logging**: Use `create_activity` to log the support interaction after resolving requests.
++
++=== CONVERSATION RULES ===
++1. If the user shares personal details, preferences (likes/dislikes), or business strategies, acknowledge them politely and naturally in your response. (Note: A background Knowledge Graph agent will automatically extract and save this data, so you do NOT need to use any tools to save this specific knowledge).
++2. If the query requires checking policy or general info, respond directly.
++3. If the query requires actions, use the tools. Once successful, provide a final summary to the user.
++4. Always maintain a helpful and professional tone.
++5. **Language Rule**: Always respond in the same language the user is speaking. If they use mixed languages (e.g., English and Malay), respond in English by default unless they explicitly request otherwise."""
+ 
+     messages = state.get("messages", [])
+     if not messages:
+@@ -184,6 +283,7 @@ RULES:
+         msg_dict = {"role": "assistant"}
+         if msg.content is not None:
+             msg_dict["content"] = msg.content
++            logger.info(f"[Manager] Assistant Content Output: {msg.content}")
+         if msg.tool_calls:
+             msg_dict["tool_calls"] = [
+                 {
+@@ -197,16 +297,27 @@ RULES:
+             ]
+         
+         logger.info(f"[Manager] Output Tool Calls: {len(msg_dict.get('tool_calls', []))}")
++        
++        # If the manager is done (no tool calls), we evaluate if we need to extract knowledge
++        trigger_kg = False
++        if not msg_dict.get("tool_calls"):
++            user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
++            if user_msg:
++                trigger_kg = evaluate_kg_trigger(user_msg.get("content", ""))
++                logger.info(f"[Manager] Evaluated KG trigger: {trigger_kg}")
++                
+         return {
+             "messages": messages + [msg_dict],
+-            "worker_error": ""
++            "worker_error": "",
++            "trigger_kg": trigger_kg
+         }
+     except Exception as e:
+-        logger.error(f"[Manager] Error: {e}", exc_info=True)
++        logger.error(f"[Manager] Error parsing response: {e}", exc_info=True)
+         fallback = {"role": "assistant", "content": "I'm sorry, I'm having trouble planning the tasks to resolve your query."}
+         return {
+             "messages": messages + [fallback],
+-            "worker_error": str(e)
++            "worker_error": str(e),
++            "trigger_kg": False
+         }
+ 
+ def worker_node(state: AgentState) -> dict:
+@@ -278,18 +389,28 @@ def manager_router(state: AgentState) -> str:
+         logger.info("[ROUTER] Manager -> Worker (Tasks need execution)")
+         return "worker"
+         
++    if state.get("trigger_kg"):
++        logger.info("[ROUTER] Manager -> Information Extractor (KG Triggered)")
++        return "information_extractor"
++        
+     logger.info("[ROUTER] Manager -> END (Final response ready)")
+     return END
+ 
++from agents.kg_nodes import information_extractor_node, cypher_generator_node
++
+ builder = StateGraph(AgentState)
+ builder.add_node("gatekeeper", gatekeeper_node)
+ builder.add_node("manager", manager_node)
+ builder.add_node("worker", worker_node)
++builder.add_node("information_extractor", information_extractor_node)
++builder.add_node("cypher_generator", cypher_generator_node)
+ 
+ builder.add_edge(START, "gatekeeper")
+ builder.add_conditional_edges("gatekeeper", gatekeeper_router)
+ builder.add_conditional_edges("manager", manager_router)
+ builder.add_edge("worker", "manager")
++builder.add_edge("information_extractor", "cypher_generator")
++builder.add_edge("cypher_generator", END)
+ 
+ graph = builder.compile()
+ 
+@@ -318,11 +439,36 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
+     try:
+         from database import SessionLocal
+         from agents.memory import save_message, get_history
++        from agents.business_context import get_active, get_business_rule
++        from knowledge_db import KnowledgeDBFactory
+         
+         session_id = f"wa_{phone}"
+         db = SessionLocal()
+         
+         try:
++            # Fetch business background and rules
++            active_bgs = get_active(db, user_id) if user_id else []
++            business_context = ""
++            if active_bgs:
++                business_context = "=== BUSINESS BACKGROUND ===\n"
++                for bg in active_bgs:
++                    business_context += f"[{bg.category}] {bg.title}: {bg.content}\n"
++                business_context += "\n"
++                
++            rules_text = get_business_rule(db, user_id) if user_id else None
++            business_rules = ""
++            if rules_text:
++                business_rules = f"=== BUSINESS RULES ===\n{rules_text}\n\n"
++
++            # Actively query knowledge graph based on user input
++            kg_context = ""
++            if user_id:
++                try:
++                    kg_db = KnowledgeDBFactory.get_instance(user_id)
++                    kg_context = kg_db.get_relevant_context(message)
++                except Exception as e:
++                    logger.error(f"[WhatsApp] Error querying KG context: {e}")
++
+             # Save user message
+             save_message(db, session_id, "user", message, user_id=user_id)
+             
+@@ -339,6 +485,8 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
+                 "user_input": message,
+                 "user_id": user_id,
+                 "contact_name": contact_name,
++                "business_context": business_context + kg_context,
++                "business_rules": business_rules,
+                 "messages": history_messages
+             }
+             
+@@ -410,11 +558,36 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
+     try:
+         from database import SessionLocal
+         from agents.memory import save_message, get_history
++        from agents.business_context import get_active, get_business_rule
++        from knowledge_db import KnowledgeDBFactory
+         
+         session_id = f"tg_{chat_id}"
+         db = SessionLocal()
+         
+         try:
++            # Fetch business background and rules
++            active_bgs = get_active(db, user_id) if user_id else []
++            business_context = ""
++            if active_bgs:
++                business_context = "=== BUSINESS BACKGROUND ===\n"
++                for bg in active_bgs:
++                    business_context += f"[{bg.category}] {bg.title}: {bg.content}\n"
++                business_context += "\n"
++                
++            rules_text = get_business_rule(db, user_id) if user_id else None
++            business_rules = ""
++            if rules_text:
++                business_rules = f"=== BUSINESS RULES ===\n{rules_text}\n\n"
++
++            # Actively query knowledge graph based on user input
++            kg_context = ""
++            if user_id:
++                try:
++                    kg_db = KnowledgeDBFactory.get_instance(user_id)
++                    kg_context = kg_db.get_relevant_context(message)
++                except Exception as e:
++                    logger.error(f"[Telegram] Error querying KG context: {e}")
++
+             # Save user message
+             save_message(db, session_id, "user", message, user_id=user_id)
+             
+@@ -430,6 +603,8 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
+                 "user_input": message,
+                 "user_id": user_id,
+                 "contact_name": contact_name,
++                "business_context": business_context + kg_context,
++                "business_rules": business_rules,
+                 "messages": history_messages
+             }
+             
+diff --git a/backend/agents/graph/tools.py b/backend/agents/graph/tools.py
+index c2fd5b5..4d4298e 100644
+--- a/backend/agents/graph/tools.py
++++ b/backend/agents/graph/tools.py
+@@ -1,6 +1,6 @@
+ import json
+ import os
+-from typing import Optional
++from typing import Optional, Dict, Any
+ from datetime import datetime, date
+ from decimal import Decimal
+ from pydantic import BaseModel, Field
+@@ -8,6 +8,7 @@ from langchain_core.tools import tool
+ from sqlalchemy.orm import Session
+ from database import SessionLocal
+ from models import Contact, Opportunity, Task, Activity, User
++from knowledge_db import KnowledgeDBFactory
+ 
+ 
+ def get_db_session():
+@@ -141,6 +142,31 @@ class GetChatHistoryInput(BaseModel):
+     session_id: str = Field(description="The unique session ID for the chat")
+     limit: Optional[int] = Field(default=50, description="Maximum number of messages to retrieve")
+ 
++class QueryKnowledgeGraphInput(BaseModel):
++    query: str = Field(description="Cypher query to execute on the knowledge graph.")
++
++class AddKgNodeInput(BaseModel):
++    node_id: str = Field(description="Unique ID for the node")
++    label: str = Field(description="Label or type of the node")
++    properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
++
++class UpdateKgNodeInput(BaseModel):
++    node_id: str = Field(description="Unique ID for the node")
++    label: str = Field(description="Label or type of the node")
++    properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
++
++class AddKgEdgeInput(BaseModel):
++    source_id: str = Field(description="Source node ID")
++    target_id: str = Field(description="Target node ID")
++    edge_type: str = Field(description="Type of the relationship")
++    properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
++
++class UpdateKgEdgeInput(BaseModel):
++    source_id: str = Field(description="Source node ID")
++    target_id: str = Field(description="Target node ID")
++    edge_type: str = Field(description="Type of the relationship")
++    properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
++
+ # ============ Tool Implementations ============
+ 
+ @tool("create_contact", args_schema=CreateContactInput)
+@@ -714,6 +740,73 @@ def get_chat_history(session_id: str, limit: int = 50) -> str:
+         return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+ 
+ 
++@tool("query_knowledge_graph", args_schema=QueryKnowledgeGraphInput)
++def query_knowledge_graph(query: str) -> str:
++    """Execute a Cypher query on the user's knowledge graph to find nodes and edges."""
++    try:
++        user_id = str(UserContext.get_user_id() or 1)
++        db = KnowledgeDBFactory.get_instance(user_id)
++        results = db.execute_cypher(query)
++        return json.dumps({
++            "success": True,
++            "data": results
++        })
++    except Exception as e:
++        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
++
++
++@tool("add_kg_node", args_schema=AddKgNodeInput)
++def add_kg_node(node_id: str, label: str, properties: Dict[str, Any] = None) -> str:
++    """Add a new node to the user's knowledge graph."""
++    if properties is None: properties = {}
++    try:
++        user_id = str(UserContext.get_user_id() or 1)
++        db = KnowledgeDBFactory.get_instance(user_id)
++        db.add_node(node_id, label, json.dumps(properties))
++        return json.dumps({"success": True, "message": f"Node '{node_id}' added successfully"})
++    except Exception as e:
++        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
++
++
++@tool("update_kg_node", args_schema=UpdateKgNodeInput)
++def update_kg_node(node_id: str, label: str, properties: Dict[str, Any] = None) -> str:
++    """Update an existing node in the user's knowledge graph."""
++    if properties is None: properties = {}
++    try:
++        user_id = str(UserContext.get_user_id() or 1)
++        db = KnowledgeDBFactory.get_instance(user_id)
++        db.update_node(node_id, label, json.dumps(properties))
++        return json.dumps({"success": True, "message": f"Node '{node_id}' updated successfully"})
++    except Exception as e:
++        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
++
++
++@tool("add_kg_edge", args_schema=AddKgEdgeInput)
++def add_kg_edge(source_id: str, target_id: str, edge_type: str, properties: Dict[str, Any] = None) -> str:
++    """Add a new edge/relationship between nodes in the user's knowledge graph."""
++    if properties is None: properties = {}
++    try:
++        user_id = str(UserContext.get_user_id() or 1)
++        db = KnowledgeDBFactory.get_instance(user_id)
++        db.add_edge(source_id, target_id, edge_type, json.dumps(properties))
++        return json.dumps({"success": True, "message": f"Edge from '{source_id}' to '{target_id}' of type '{edge_type}' added successfully"})
++    except Exception as e:
++        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
++
++
++@tool("update_kg_edge", args_schema=UpdateKgEdgeInput)
++def update_kg_edge(source_id: str, target_id: str, edge_type: str, properties: Dict[str, Any] = None) -> str:
++    """Update an existing edge/relationship in the user's knowledge graph."""
++    if properties is None: properties = {}
++    try:
++        user_id = str(UserContext.get_user_id() or 1)
++        db = KnowledgeDBFactory.get_instance(user_id)
++        db.update_edge(source_id, target_id, edge_type, json.dumps(properties))
++        return json.dumps({"success": True, "message": f"Edge from '{source_id}' to '{target_id}' of type '{edge_type}' updated successfully"})
++    except Exception as e:
++        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
++
++
+ # ============ Export All Tools ============
+ 
+ CRM_TOOLS = [
+@@ -734,4 +827,9 @@ CRM_TOOLS = [
+     get_dashboard,
+     save_chat_message,
+     get_chat_history,
++    query_knowledge_graph,
++    add_kg_node,
++    update_kg_node,
++    add_kg_edge,
++    update_kg_edge,
+ ]
+\ No newline at end of file
+diff --git a/backend/agents/kg_nodes.py b/backend/agents/kg_nodes.py
+new file mode 100644
+index 0000000..4cf0a9b
+--- /dev/null
++++ b/backend/agents/kg_nodes.py
+@@ -0,0 +1,172 @@
++import json
++import os
++from knowledge_db import KnowledgeDBFactory
++
++def _get_openai_client():
++    from .cs_agent import get_ilmu_client
++    return get_ilmu_client()
++
++def information_extractor_node(state: dict) -> dict:
++    """Extract nodes and edges as structured JSON using DSNF rules."""
++    messages = state.get("messages", [])
++    
++    # We only care about the latest user message
++    user_msg = next((m for m in reversed(messages) if isinstance(m, dict) and m.get("role") == "user" or getattr(m, "type", getattr(m, "role", "")) in ["human", "user"]), None)
++    text_to_extract = ""
++    if user_msg:
++        text_to_extract = user_msg.get("content") if isinstance(user_msg, dict) else getattr(user_msg, "content", "")
++    
++    prompt = """You are a World-Class Data Ontology Expert and Knowledge Graph Architect. Your primary task is to analyze user text and extract information into entities (Nodes) and relationships (Edges) in strict JSON format. You must utilize Dependency Syntactic Normal Forms (DSNFs) to accurately derive relation triples from complex syntax.
++
++**INSTRUCTIONS AND STRICT CONSTRAINTS:**
++ 1. **Entity Extraction (Nodes):** Identify primary subjects and objects. Each entity must have an id (unique lowercase name, snake_case) and a label (e.g., PERSON, DEVICE, CONCEPT, LOCATION).
++ 2. **Coreference Resolution:** If the text uses pronouns (e.g., "he", "it", "the device", "this system") referring to previously mentioned entities, you MUST map them back to the original entity's id. DO NOT create new entities for pronouns.
++ 3. **Dependency-Based Relation Extraction (Edges):** Extract relationships based on structural dependencies. The relationship type MUST be in UPPER_SNAKE_CASE. Follow these DSNF rules:
++   * **Basic SVO (DSNF2):** Identify Subject-Verb-Object (SBV, VOB) dependencies to form (Entity1, PREDICATE, Entity2).
++   * **Prepositional Modifiers (DSNF3/DSNF4):** When prepositions act as adverbials or complements (POB, ADV, CMP), combine the predicate and preposition to form the relation, e.g., (Entity1, PREDICATE_PREPOSITION, Entity2).
++   * **Coordination (DSNF5/DSNF6/DSNF7):** When coordinate verbs or objects share subjects/objects (COO), unpack them into distinct triples. e.g., "X controls Y and Z" becomes (X, CONTROLS, Y) and (X, CONTROLS, Z).
++ 4. **Output Structure:** ONLY output valid JSON. No conversational text, no markdown explanations outside the JSON block.
++
++**EXAMPLE 1: Coordination and Complex Chains (DSNF5/6/7 Application)**
++*Input:* "The Maya System is an AI-based smart home ecosystem that automatically controls the lights, air conditioning, and smart door locks. It is specifically designed to help Malaysian homeowners manage their daily energy consumption."
++*Output:*
++{
++  "nodes": [
++    {"id": "maya_system", "label": "TECHNOLOGY"},
++    {"id": "smart_home_ecosystem", "label": "CONCEPT"},
++    {"id": "lights", "label": "DEVICE"},
++    {"id": "air_conditioning", "label": "DEVICE"},
++    {"id": "smart_door_locks", "label": "DEVICE"},
++    {"id": "malaysian_homeowners", "label": "PERSON"},
++    {"id": "energy_consumption", "label": "CONCEPT"}
++  ],
++  "edges": [
++    {"source": "maya_system", "target": "smart_home_ecosystem", "type": "IS_A"},
++    {"source": "maya_system", "target": "lights", "type": "CONTROLS"},
++    {"source": "maya_system", "target": "air_conditioning", "type": "CONTROLS"},
++    {"source": "maya_system", "target": "smart_door_locks", "type": "CONTROLS"},
++    {"source": "maya_system", "target": "malaysian_homeowners", "type": "DESIGNED_TO_HELP"},
++    {"source": "malaysian_homeowners", "target": "energy_consumption", "type": "MANAGE"}
++  ]
++}
++
++**EXAMPLE 2: Coreference Resolution & Prepositional Dependencies (DSNF3/4 Application)**
++*Input:* "John bought a Xiaomi temperature sensor yesterday. John installed the sensor in the living room. Suddenly, he saw that the device disconnected from the WiFi, so he immediately restarted it."
++*Output:*
++{
++  "nodes": [
++    {"id": "john", "label": "PERSON"},
++    {"id": "xiaomi_temperature_sensor", "label": "DEVICE"},
++    {"id": "living_room", "label": "LOCATION"},
++    {"id": "wifi", "label": "TECHNOLOGY"}
++  ],
++  "edges": [
++    {"source": "john", "target": "xiaomi_temperature_sensor", "type": "BOUGHT"},
++    {"source": "john", "target": "xiaomi_temperature_sensor", "type": "INSTALLED"},
++    {"source": "xiaomi_temperature_sensor", "target": "living_room", "type": "INSTALLED_IN"},
++    {"source": "xiaomi_temperature_sensor", "target": "wifi", "type": "DISCONNECTED_FROM"},
++    {"source": "john", "target": "xiaomi_temperature_sensor", "type": "RESTARTED"}
++  ]
++}
++"""
++    
++    try:
++        response = _get_openai_client().chat.completions.create(
++            model=os.getenv("OPENAI_MODEL_NAME", "ilmu-glm-5.1"),
++            messages=[
++                {"role": "system", "content": prompt},
++                {"role": "user", "content": text_to_extract}
++            ],
++            temperature=0.0,
++            response_format={"type": "json_object"}
++        )
++        
++        content = response.choices[0].message.content
++        from .cs_agent import parse_llm_json
++        extracted_data = parse_llm_json(content)
++    except Exception as e:
++        print(f"Extraction error: {e}")
++        extracted_data = {"nodes": [], "edges": []}
++        
++    return {"extracted_kg_data": extracted_data}
++
++
++def cypher_generator_node(state: dict) -> dict:
++    """Convert structured JSON from the extractor into valid Cypher MERGE queries and execute them."""
++    extracted_data = state.get("extracted_kg_data", {"nodes": [], "edges": []})
++    
++    if not extracted_data.get("nodes") and not extracted_data.get("edges"):
++        return {"executed_kg_queries": []}
++        
++    prompt = """You are an Expert Neo4j Database Administrator. Your task is to receive JSON format data (nodes and edges) and convert it into ready-to-execute Cypher query language.
++**STRICT INSTRUCTIONS AND CONSTRAINTS:**
++ 1. **Anti-Duplication Rule:** You MUST use MERGE for every Node and Edge. DO NOT use CREATE. This prevents database duplication.
++ 2. **MERGE Syntax:**
++   * MERGE (n:Entity {id: 'id_value'}) for Nodes. We strictly use `Entity` as the table name for nodes.
++   * MERGE (a)-[:RelatedTo {type: 'RELATIONSHIP_TYPE'}]->(b) for Edges. We strictly use `RelatedTo` as the table name for edges.
++   * Only create edges after ensuring (a) and (b) have been explicitly MATCHED or MERGED beforehand and carried over using the WITH clause.
++ 3. **Clean Output:** ONLY provide valid JSON containing a "queries" array. No markdown wrapping outside the JSON block.
++
++**DATABASE SCHEMA:**
++- All nodes MUST use the `Entity` table/label. They have properties: `id` (STRING), `label` (STRING), and `properties` (STRING).
++- All relationships MUST use the `RelatedTo` table/type. They have properties: `type` (STRING) and `properties` (STRING).
++
++**EXAMPLE 1: Processing Coordination Chains (Multiple Edges from 1 Node)**
++*Input JSON:*
++{"nodes": [{"id": "maya_system", "label": "Technology"}, {"id": "lights", "label": "Device"}, {"id": "homeowner", "label": "Person"}], "edges": [{"source": "maya_system", "target": "lights", "type": "CONTROLS"}, {"source": "maya_system", "target": "homeowner", "type": "HELPS"}]}
++*Output:*
++{
++  "queries": [
++    "MERGE (n1:Entity {id: 'maya_system'}) ON CREATE SET n1.label='Technology', n1.properties='{}'",
++    "MERGE (n2:Entity {id: 'lights'}) ON CREATE SET n2.label='Device', n2.properties='{}'",
++    "MERGE (n3:Entity {id: 'homeowner'}) ON CREATE SET n3.label='Person', n3.properties='{}'",
++    "MATCH (n1:Entity {id: 'maya_system'}), (n2:Entity {id: 'lights'}), (n3:Entity {id: 'homeowner'}) MERGE (n1)-[r1:RelatedTo]->(n2) ON CREATE SET r1.type='CONTROLS', r1.properties='{}' MERGE (n1)-[r2:RelatedTo]->(n3) ON CREATE SET r2.type='HELPS', r2.properties='{}'"
++  ]
++}
++
++**EXAMPLE 2: Processing Reused Entities (Multiple relationships between the same nodes)**
++*Input JSON:*
++{"nodes": [{"id": "john", "label": "Person"}, {"id": "sensor", "label": "Device"}], "edges": [{"source": "john", "target": "sensor", "type": "BOUGHT"}, {"source": "john", "target": "sensor", "type": "INSTALLED"}, {"source": "john", "target": "sensor", "type": "RESTARTED"}]}
++*Output:*
++{
++  "queries": [
++    "MERGE (n1:Entity {id: 'john'}) ON CREATE SET n1.label='Person', n1.properties='{}'",
++    "MERGE (n2:Entity {id: 'sensor'}) ON CREATE SET n2.label='Device', n2.properties='{}'",
++    "MATCH (n1:Entity {id: 'john'}), (n2:Entity {id: 'sensor'}) MERGE (n1)-[r1:RelatedTo]->(n2) ON CREATE SET r1.type='BOUGHT', r1.properties='{}' MERGE (n1)-[r2:RelatedTo]->(n2) ON CREATE SET r2.type='INSTALLED', r2.properties='{}' MERGE (n1)-[r3:RelatedTo]->(n2) ON CREATE SET r3.type='RESTARTED', r3.properties='{}'"
++  ]
++}
++"""
++
++    try:
++        response = _get_openai_client().chat.completions.create(
++            model=os.getenv("OPENAI_MODEL_NAME", "ilmu-glm-5.1"),
++            messages=[
++                {"role": "system", "content": prompt},
++                {"role": "user", "content": json.dumps(extracted_data)}
++            ],
++            temperature=0.0,
++            response_format={"type": "json_object"}
++        )
++        
++        content = response.choices[0].message.content
++        from .cs_agent import parse_llm_json
++        query_data = parse_llm_json(content)
++        queries = query_data.get("queries", [])
++    except Exception as e:
++        print(f"Cypher generation error: {e}")
++        queries = []
++        
++    user_id = state.get("user_id", "default")
++    user_db = KnowledgeDBFactory.get_instance(user_id)
++    
++    # Execute the queries
++    executed_queries = []
++    for query in queries:
++        try:
++            user_db.execute_cypher(query)
++            executed_queries.append({"query": query, "status": "success"})
++        except Exception as e:
++            print(f"Cypher execution error: {e} for query: {query}")
++            executed_queries.append({"query": query, "status": "error", "error": str(e)})
++            
++    return {"executed_kg_queries": executed_queries}
+diff --git a/backend/knowledge_db.py b/backend/knowledge_db.py
+new file mode 100644
+index 0000000..348da9b
+--- /dev/null
++++ b/backend/knowledge_db.py
+@@ -0,0 +1,155 @@
++import os
++import ladybug as lb
++
++class KnowledgeDB:
++    def __init__(self, db_path=None):
++        if db_path is None:
++            db_path = os.getenv("KNOWLEDGE_DB_PATH", "knowledge.lbug")
++        
++        # Ensure directory exists
++        dir_name = os.path.dirname(db_path)
++        if dir_name:
++            os.makedirs(dir_name, exist_ok=True)
++        
++        self.db = lb.Database(db_path)
++        self.conn = lb.Connection(self.db)
++        self.init_schema()
++
++    def init_schema(self):
++        # Create Entity node table
++        try:
++            self.conn.execute("CREATE NODE TABLE Entity(id STRING, label STRING, properties STRING, PRIMARY KEY(id))")
++        except RuntimeError as e:
++            if "already exists" not in str(e).lower():
++                raise e
++        
++        # Create RelatedTo relationship table
++        try:
++            self.conn.execute("CREATE REL TABLE RelatedTo(FROM Entity TO Entity, type STRING, properties STRING)")
++        except RuntimeError as e:
++            if "already exists" not in str(e).lower():
++                raise e
++
++    def execute_cypher(self, query: str):
++        result = self.conn.execute(query)
++        
++        # Check if the query returned any data
++        if not result.has_next():
++            return []
++            
++        cols = result.get_column_names()
++        rows = []
++        while result.has_next():
++            rows.append(dict(zip(cols, result.get_next())))
++        return rows
++
++    def get_all_graph_data(self):
++        nodes_result = self.execute_cypher("MATCH (n:Entity) RETURN n.id as id, n.label as label, n.properties as properties")
++        edges_result = self.execute_cypher("MATCH (a:Entity)-[r:RelatedTo]->(b:Entity) RETURN a.id as source, b.id as target, r.type as type, r.properties as properties")
++        return {
++            "nodes": nodes_result,
++            "edges": edges_result
++        }
++
++    def add_node(self, node_id: str, label: str, properties: str):
++        # Using string replacement to escape single quotes, assuming well-formed inputs
++        safe_id = node_id.replace("'", "\\'")
++        safe_label = label.replace("'", "\\'")
++        safe_props = properties.replace("'", "\\'")
++        query = f"MERGE (n:Entity {{id: '{safe_id}'}}) ON CREATE SET n.label = '{safe_label}', n.properties = '{safe_props}' ON MATCH SET n.label = '{safe_label}', n.properties = '{safe_props}'"
++        return self.execute_cypher(query)
++
++    def update_node(self, node_id: str, label: str, properties: str):
++        safe_id = node_id.replace("'", "\\'")
++        safe_label = label.replace("'", "\\'")
++        safe_props = properties.replace("'", "\\'")
++        query = f"MATCH (n:Entity {{id: '{safe_id}'}}) SET n.label = '{safe_label}', n.properties = '{safe_props}'"
++        return self.execute_cypher(query)
++
++    def delete_node(self, node_id: str):
++        safe_id = node_id.replace("'", "\\'")
++        query = f"MATCH (n:Entity {{id: '{safe_id}'}}) DETACH DELETE n"
++        return self.execute_cypher(query)
++
++    def add_edge(self, source_id: str, target_id: str, edge_type: str, properties: str):
++        safe_source = source_id.replace("'", "\\'")
++        safe_target = target_id.replace("'", "\\'")
++        safe_type = edge_type.replace("'", "\\'")
++        safe_props = properties.replace("'", "\\'")
++        query = f"MATCH (a:Entity {{id: '{safe_source}'}}), (b:Entity {{id: '{safe_target}'}}) MERGE (a)-[r:RelatedTo]->(b) ON CREATE SET r.type = '{safe_type}', r.properties = '{safe_props}' ON MATCH SET r.type = '{safe_type}', r.properties = '{safe_props}'"
++        return self.execute_cypher(query)
++
++    def update_edge(self, source_id: str, target_id: str, edge_type: str, properties: str):
++        safe_source = source_id.replace("'", "\\'")
++        safe_target = target_id.replace("'", "\\'")
++        safe_type = edge_type.replace("'", "\\'")
++        safe_props = properties.replace("'", "\\'")
++        query = f"MATCH (a:Entity {{id: '{safe_source}'}})-[r:RelatedTo {{type: '{safe_type}'}}]->(b:Entity {{id: '{safe_target}'}}) SET r.properties = '{safe_props}'"
++        return self.execute_cypher(query)
++
++    def delete_edge(self, source_id: str, target_id: str, edge_type: str):
++        safe_source = source_id.replace("'", "\\'")
++        safe_target = target_id.replace("'", "\\'")
++        safe_type = edge_type.replace("'", "\\'")
++        query = f"MATCH (a:Entity {{id: '{safe_source}'}})-[r:RelatedTo {{type: '{safe_type}'}}]->(b:Entity {{id: '{safe_target}'}}) DELETE r"
++        return self.execute_cypher(query)
++
++    def get_relevant_context(self, text: str) -> str:
++        """Extract relevant facts from the graph based on the user's text."""
++        import re
++        import logging
++        
++        logger = logging.getLogger("CS_Agent_Workflow")
++        
++        # Grab words 3 characters or longer (to catch names like "Ali", "Abu", etc.)
++        words = re.findall(r'\b\w{3,}\b', text.lower())
++        
++        if not words:
++            return ""
++            
++        facts = []
++        logger.info(f"[KG Retrieval] Searching for keywords: {words}")
++        
++        for word in words:
++            safe_word = word.replace("'", "\\'")
++            
++            # Find matching nodes
++            try:
++                node_query = f"MATCH (n:Entity) WHERE lower(n.id) CONTAINS '{safe_word}' OR lower(n.label) CONTAINS '{safe_word}' RETURN n.id, n.label LIMIT 3"
++                nodes = self.execute_cypher(node_query)
++                for node in nodes:
++                    facts.append(f"Node: {node.get('n.id')} (Type: {node.get('n.label')})")
++                    
++                # Find matching edges (1-hop)
++                edge_query = f"MATCH (a:Entity)-[r:RelatedTo]->(b:Entity) WHERE lower(a.id) CONTAINS '{safe_word}' OR lower(b.id) CONTAINS '{safe_word}' RETURN a.id, r.type, b.id LIMIT 5"
++                edges = self.execute_cypher(edge_query)
++                for edge in edges:
++                    facts.append(f"Fact: {edge.get('a.id')} is {edge.get('r.type')} {edge.get('b.id')}")
++            except Exception as e:
++                # Catch Ladybug syntax or execution errors and continue
++                logger.error(f"[KG Retrieval] Error querying KG for '{safe_word}': {e}")
++                continue
++                
++        # Deduplicate and format
++        unique_facts = list(set(facts))
++        if not unique_facts:
++            logger.info(f"[KG Retrieval] No relevant facts found.")
++            return ""
++            
++        logger.info(f"[KG Retrieval] Found {len(unique_facts)} relevant facts.")
++        return "=== CUSTOMER KNOWLEDGE GRAPH ===\n" + "\n".join(unique_facts) + "\n\n"
++
++    def close(self):
++        self.conn.close()
++
++class KnowledgeDBFactory:
++    _instances = {}
++
++    @classmethod
++    def get_instance(cls, user_id) -> KnowledgeDB:
++        user_id_str = str(user_id)
++        if user_id_str not in cls._instances:
++            base_dir = os.path.dirname(os.path.abspath(__file__))
++            db_path = os.path.join(base_dir, "data", "lbug", f"{user_id_str}.lbug")
++            cls._instances[user_id_str] = KnowledgeDB(db_path)
++        return cls._instances[user_id_str]
+diff --git a/backend/main.py b/backend/main.py
+index d21ff41..aa9078e 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -20,6 +20,8 @@ from routes import (
+     telegram,
+     chat_memory,
+     business_background,
++    business_rules,
++    kg,
+ )
+ 
+ app = FastAPI(title="UM CRM API", version="1.0.0")
+@@ -137,11 +139,29 @@ def ensure_telegram_table() -> None:
+             """))
+             conn.execute(text("CREATE INDEX idx_telegram_user_id ON telegram_bots(user_id)"))
+ 
++def ensure_business_rules_table() -> None:
++    with engine.begin() as conn:
++        result = conn.execute(text(
++            "SELECT table_name FROM information_schema.tables WHERE table_name = 'business_rules'"
++        )).fetchone()
++        if not result:
++            conn.execute(text("""
++                CREATE TABLE business_rules (
++                    id SERIAL PRIMARY KEY,
++                    user_id INTEGER UNIQUE NOT NULL REFERENCES users(id),
++                    rules_text TEXT,
++                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
++                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
++                )
++            """))
++            conn.execute(text("CREATE INDEX idx_business_rules_user_id ON business_rules(user_id)"))
++
+ ensure_activity_columns()
+ ensure_user_columns()
+ ensure_whatsapp_table()
+ ensure_telegram_table()
+ ensure_chatery_whatsapp_table()
++ensure_business_rules_table()
+ 
+ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+ app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
+@@ -168,6 +188,8 @@ app.include_router(telegram.router, prefix="/api/telegram", tags=["telegram"])
+ app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
+ app.include_router(chat_memory.router, prefix="/api/chat-memory", tags=["chat_memory"])
+ app.include_router(business_background.router, prefix="/api/business-background", tags=["business_background"])
++app.include_router(business_rules.router, prefix="/api/business-rules", tags=["business_rules"])
++app.include_router(kg.router, prefix="/api", tags=["knowledge-graph"])
+ 
+ 
+ @app.get("/")
+diff --git a/backend/models.py b/backend/models.py
+index 0888f2b..60a4cb2 100644
+--- a/backend/models.py
++++ b/backend/models.py
+@@ -54,6 +54,7 @@ class User(Base):
+         "Activity", back_populates="owner", foreign_keys="Activity.user_id"
+     )
+     emails = relationship("Email", back_populates="owner")
++    business_rule = relationship("BusinessRule", uselist=False, back_populates="user")
+ 
+ 
+ class Contact(Base):
+@@ -248,3 +249,16 @@ class BusinessBackground(Base):
+ 
+     user = relationship("User")
+ 
++
++class BusinessRule(Base):
++    __tablename__ = "business_rules"
++
++    id = Column(Integer, primary_key=True, index=True)
++    user_id = Column(Integer, ForeignKey("users.id"), unique=True, index=True)
++    rules_text = Column(Text, nullable=True)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    user = relationship("User", back_populates="business_rule")
++
++
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index de5a19a..a74452d 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -18,3 +18,4 @@ openai>=1.0.0
+ langgraph
+ langchain-openai
+ requests
++ladybug
+diff --git a/backend/routes/business_rules.py b/backend/routes/business_rules.py
+new file mode 100644
+index 0000000..ceda643
+--- /dev/null
++++ b/backend/routes/business_rules.py
+@@ -0,0 +1,39 @@
++from fastapi import APIRouter, Depends, HTTPException
++from sqlalchemy.orm import Session
++from pydantic import BaseModel
++from database import get_db
++from models import User, BusinessRule
++from auth import get_current_user
++
++router = APIRouter()
++
++class BusinessRuleUpdate(BaseModel):
++    rules_text: str
++
++@router.get("")
++def get_business_rule(
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user)
++):
++    """Get the single business rule for the current user."""
++    rule = db.query(BusinessRule).filter(BusinessRule.user_id == current_user.id).first()
++    if not rule:
++        return {"rules_text": ""}
++    return {"rules_text": rule.rules_text or ""}
++
++@router.put("")
++def update_business_rule(
++    data: BusinessRuleUpdate,
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user)
++):
++    """Create or update the single business rule for the current user."""
++    rule = db.query(BusinessRule).filter(BusinessRule.user_id == current_user.id).first()
++    if rule:
++        rule.rules_text = data.rules_text
++    else:
++        rule = BusinessRule(user_id=current_user.id, rules_text=data.rules_text)
++        db.add(rule)
++    db.commit()
++    db.refresh(rule)
++    return {"success": True, "rules_text": rule.rules_text}
+diff --git a/backend/routes/kg.py b/backend/routes/kg.py
+new file mode 100644
+index 0000000..6756f38
+--- /dev/null
++++ b/backend/routes/kg.py
+@@ -0,0 +1,166 @@
++from fastapi import APIRouter, Depends, HTTPException, status
++from pydantic import BaseModel
++from sqlalchemy.orm import Session
++from typing import Dict, Any, Optional
++import logging
++
++from database import get_db
++from models import User
++from auth import get_current_user
++from agents.cs_agent import graph
++from agents.memory import save_message, get_history
++from knowledge_db import KnowledgeDBFactory
++
++logger = logging.getLogger("KG_Routes")
++router = APIRouter()
++
++class ChatRequest(BaseModel):
++    message: str
++    contact_name: str = "Unknown"
++
++class ChatResponse(BaseModel):
++    response: str
++    kg_extracted: bool = False
++    kg_queries: list = []
++
++class NodeRequest(BaseModel):
++    id: str
++    label: str
++    properties: str
++
++class EdgeRequest(BaseModel):
++    source: str
++    target: str
++    type: str
++    properties: str
++
++@router.post("/chat", response_model=ChatResponse)
++def test_chat_endpoint(
++    req: ChatRequest,
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user),
++):
++    user_id = current_user.id
++    session_id = f"test_chat_{user_id}"
++    
++    try:
++        # Save user message
++        save_message(db, session_id, "user", req.message, user_id=user_id)
++        
++        # Load history (up to 20 messages for context)
++        db_history = get_history(db, session_id, limit=20, user_id=user_id)
++        
++        history_messages = []
++        for msg in db_history[:-1]:
++            if msg.role in ["user", "assistant", "system"]:
++                history_messages.append({"role": msg.role, "content": msg.content})
++        
++        initial_state = {
++            "user_input": req.message,
++            "user_id": user_id,
++            "contact_name": req.contact_name,
++            "messages": history_messages
++        }
++        
++        # Execute the graph
++        current_state = initial_state.copy()
++        for event in graph.stream(initial_state):
++            for node_name, node_state in event.items():
++                current_state.update(node_state)
++        
++        gatekeeper_resp = current_state.get("gatekeeper_response", {})
++        if not gatekeeper_resp.get("agent_loop", False):
++            ai_response = gatekeeper_resp.get("response", "")
++        else:
++            messages = current_state.get("messages", [])
++            if messages:
++                last_message = messages[-1]
++                ai_response = last_message.get("content", "")
++            else:
++                ai_response = "I'm sorry, I'm having trouble processing your request right now."
++        
++        if ai_response:
++            save_message(db, session_id, "assistant", ai_response, user_id=user_id)
++            
++        kg_extracted = current_state.get("trigger_kg", False)
++        kg_queries = current_state.get("executed_kg_queries", [])
++            
++        return ChatResponse(
++            response=ai_response,
++            kg_extracted=kg_extracted,
++            kg_queries=kg_queries
++        )
++        
++    except Exception as e:
++        logger.error(f"[KG Chat Endpoint] Error: {e}", exc_info=True)
++        raise HTTPException(status_code=500, detail=str(e))
++
++@router.get("/graph")
++def get_graph_data(current_user: User = Depends(get_current_user)):
++    try:
++        user_db = KnowledgeDBFactory.get_instance(current_user.id)
++        data = user_db.get_all_graph_data()
++        return data
++    except Exception as e:
++        logger.error(f"[KG Graph Endpoint] Error: {e}", exc_info=True)
++        raise HTTPException(status_code=500, detail=str(e))
++
++@router.post("/node")
++def add_node(req: NodeRequest, current_user: User = Depends(get_current_user)):
++    try:
++        user_db = KnowledgeDBFactory.get_instance(current_user.id)
++        user_db.add_node(req.id, req.label, req.properties)
++        return {"status": "success", "message": "Node added"}
++    except Exception as e:
++        logger.error(f"[KG Add Node] Error: {e}", exc_info=True)
++        raise HTTPException(status_code=500, detail=str(e))
++
++@router.put("/node")
++def update_node(req: NodeRequest, current_user: User = Depends(get_current_user)):
++    try:
++        user_db = KnowledgeDBFactory.get_instance(current_user.id)
++        user_db.update_node(req.id, req.label, req.properties)
++        return {"status": "success", "message": "Node updated"}
++    except Exception as e:
++        logger.error(f"[KG Update Node] Error: {e}", exc_info=True)
++        raise HTTPException(status_code=500, detail=str(e))
++
++@router.delete("/node/{node_id}")
++def delete_node(node_id: str, current_user: User = Depends(get_current_user)):
++    try:
++        user_db = KnowledgeDBFactory.get_instance(current_user.id)
++        user_db.delete_node(node_id)
++        return {"status": "success", "message": "Node deleted"}
++    except Exception as e:
++        logger.error(f"[KG Delete Node] Error: {e}", exc_info=True)
++        raise HTTPException(status_code=500, detail=str(e))
++
++@router.post("/edge")
++def add_edge(req: EdgeRequest, current_user: User = Depends(get_current_user)):
++    try:
++        user_db = KnowledgeDBFactory.get_instance(current_user.id)
++        user_db.add_edge(req.source, req.target, req.type, req.properties)
++        return {"status": "success", "message": "Edge added"}
++    except Exception as e:
++        logger.error(f"[KG Add Edge] Error: {e}", exc_info=True)
++        raise HTTPException(status_code=500, detail=str(e))
++
++@router.put("/edge")
++def update_edge(req: EdgeRequest, current_user: User = Depends(get_current_user)):
++    try:
++        user_db = KnowledgeDBFactory.get_instance(current_user.id)
++        user_db.update_edge(req.source, req.target, req.type, req.properties)
++        return {"status": "success", "message": "Edge updated"}
++    except Exception as e:
++        logger.error(f"[KG Update Edge] Error: {e}", exc_info=True)
++        raise HTTPException(status_code=500, detail=str(e))
++
++@router.delete("/edge")
++def delete_edge(source: str, target: str, type: str, current_user: User = Depends(get_current_user)):
++    try:
++        user_db = KnowledgeDBFactory.get_instance(current_user.id)
++        user_db.delete_edge(source, target, type)
++        return {"status": "success", "message": "Edge deleted"}
++    except Exception as e:
++        logger.error(f"[KG Delete Edge] Error: {e}", exc_info=True)
++        raise HTTPException(status_code=500, detail=str(e))
+diff --git a/backend/test_db.py b/backend/test_db.py
+new file mode 100644
+index 0000000..6fa0eaf
+--- /dev/null
++++ b/backend/test_db.py
+@@ -0,0 +1,5 @@
++from database import SessionLocal
++from models import BusinessRule
++db = SessionLocal()
++print("DB connection OK")
++db.close()
+diff --git a/frontend/app/knowledge-graph/page.tsx b/frontend/app/knowledge-graph/page.tsx
+new file mode 100644
+index 0000000..7ffa4aa
+--- /dev/null
++++ b/frontend/app/knowledge-graph/page.tsx
+@@ -0,0 +1,477 @@
++'use client';
++
++import dynamic from 'next/dynamic';
++import { useEffect, useState, useRef, useCallback } from 'react';
++import { useRouter } from 'next/navigation';
++import Sidebar from '@/components/Sidebar';
++import { kg } from '@/lib/api';
++import { Plus, Edit, Trash2, Network, Link as LinkIcon, X } from 'lucide-react';
++
++const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
++
++type NodeData = { id: string; label: string; properties: string; val?: number; x?: number; y?: number };
++type LinkData = { source: string | NodeData; target: string | NodeData; type: string; properties: string };
++
++export default function KnowledgeGraphPage() {
++  const router = useRouter();
++  const [graphData, setGraphData] = useState<{ nodes: NodeData[]; links: LinkData[] }>({ nodes: [], links: [] });
++  const [loading, setLoading] = useState(true);
++  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
++  const containerRef = useRef<HTMLDivElement>(null);
++  
++  // Selection state
++  const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
++  const [selectedLink, setSelectedLink] = useState<LinkData | null>(null);
++  
++  // Modal state
++  const [showNodeModal, setShowNodeModal] = useState(false);
++  const [nodeModalMode, setNodeModalMode] = useState<'create' | 'edit'>('create');
++  const [nodeForm, setNodeForm] = useState({ id: '', label: '', properties: '' });
++
++  const [showEdgeModal, setShowEdgeModal] = useState(false);
++  const [edgeModalMode, setEdgeModalMode] = useState<'create' | 'edit'>('create');
++  const [edgeForm, setEdgeForm] = useState({ source: '', target: '', type: '', properties: '' });
++
++  useEffect(() => {
++    const token = localStorage.getItem('token');
++    if (!token) {
++      router.push('/');
++      return;
++    }
++    loadGraph();
++  }, [router]);
++
++  useEffect(() => {
++    const updateDimensions = () => {
++      if (containerRef.current) {
++        setDimensions({
++          width: containerRef.current.clientWidth,
++          height: containerRef.current.clientHeight
++        });
++      }
++    };
++    
++    window.addEventListener('resize', updateDimensions);
++    updateDimensions();
++    // small delay to ensure layout is complete
++    setTimeout(updateDimensions, 100);
++    
++    return () => window.removeEventListener('resize', updateDimensions);
++  }, [loading]);
++
++  const loadGraph = async () => {
++    try {
++      const res = await kg.getGraph();
++      const data = res.data;
++      setGraphData({
++        nodes: data.nodes || [],
++        links: (data.edges || []).map((e: any) => ({ ...e }))
++      });
++    } catch (err) {
++      console.error(err);
++    } finally {
++      setLoading(false);
++    }
++  };
++
++  const handleNodeClick = useCallback((node: NodeData) => {
++    setSelectedNode(node);
++    setSelectedLink(null);
++  }, []);
++
++  const handleLinkClick = useCallback((link: LinkData) => {
++    setSelectedLink(link);
++    setSelectedNode(null);
++  }, []);
++
++  const handleBackgroundClick = useCallback(() => {
++    setSelectedNode(null);
++    setSelectedLink(null);
++  }, []);
++
++  // Node Actions
++  const openCreateNodeModal = () => {
++    setNodeModalMode('create');
++    setNodeForm({ id: '', label: '', properties: '' });
++    setShowNodeModal(true);
++  };
++
++  const openEditNodeModal = () => {
++    if (!selectedNode) return;
++    setNodeModalMode('edit');
++    setNodeForm({ 
++      id: selectedNode.id, 
++      label: selectedNode.label || '', 
++      properties: selectedNode.properties || '' 
++    });
++    setShowNodeModal(true);
++  };
++
++  const handleDeleteNode = async () => {
++    if (!selectedNode || !confirm('Are you sure you want to delete this node?')) return;
++    try {
++      await kg.deleteNode(selectedNode.id);
++      setSelectedNode(null);
++      loadGraph();
++    } catch (err) {
++      console.error(err);
++      alert('Error deleting node');
++    }
++  };
++
++  const handleNodeSubmit = async (e: React.FormEvent) => {
++    e.preventDefault();
++    try {
++      if (nodeModalMode === 'create') {
++        await kg.addNode(nodeForm);
++      } else {
++        await kg.updateNode(nodeForm);
++      }
++      setShowNodeModal(false);
++      loadGraph();
++    } catch (err) {
++      console.error(err);
++      alert('Error saving node');
++    }
++  };
++
++  // Edge Actions
++  const openCreateEdgeModal = () => {
++    setEdgeModalMode('create');
++    setEdgeForm({ 
++      source: selectedNode ? selectedNode.id : '', 
++      target: '', 
++      type: '', 
++      properties: '' 
++    });
++    setShowEdgeModal(true);
++  };
++
++  const openEditEdgeModal = () => {
++    if (!selectedLink) return;
++    const sourceId = typeof selectedLink.source === 'object' ? selectedLink.source.id : selectedLink.source;
++    const targetId = typeof selectedLink.target === 'object' ? selectedLink.target.id : selectedLink.target;
++    
++    setEdgeModalMode('edit');
++    setEdgeForm({ 
++      source: sourceId, 
++      target: targetId, 
++      type: selectedLink.type || '', 
++      properties: selectedLink.properties || '' 
++    });
++    setShowEdgeModal(true);
++  };
++
++  const handleDeleteEdge = async () => {
++    if (!selectedLink || !confirm('Are you sure you want to delete this edge?')) return;
++    const sourceId = typeof selectedLink.source === 'object' ? selectedLink.source.id : selectedLink.source;
++    const targetId = typeof selectedLink.target === 'object' ? selectedLink.target.id : selectedLink.target;
++    
++    try {
++      await kg.deleteEdge(sourceId, targetId, selectedLink.type);
++      setSelectedLink(null);
++      loadGraph();
++    } catch (err) {
++      console.error(err);
++      alert('Error deleting edge');
++    }
++  };
++
++  const handleEdgeSubmit = async (e: React.FormEvent) => {
++    e.preventDefault();
++    try {
++      if (edgeModalMode === 'create') {
++        await kg.addEdge(edgeForm);
++      } else {
++        await kg.updateEdge(edgeForm);
++      }
++      setShowEdgeModal(false);
++      loadGraph();
++    } catch (err) {
++      console.error(err);
++      alert('Error saving edge');
++    }
++  };
++
++  if (loading) {
++    return (
++      <div className="flex min-h-screen">
++        <Sidebar />
++        <div className="flex-1 flex items-center justify-center">
++          <div className="text-muted">Loading Graph...</div>
++        </div>
++      </div>
++    );
++  }
++
++  return (
++    <div className="flex flex-col md:flex-row min-h-screen">
++      <Sidebar />
++      <div className="flex-1 p-6 lg:p-10 flex flex-col h-screen overflow-hidden">
++        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-6 shrink-0">
++          <div>
++            <div className="page-kicker">Data Explorer</div>
++            <h1 className="page-title mt-2">Knowledge Graph</h1>
++            <p className="text-muted mt-2">Visualize and manage your entities and relationships.</p>
++          </div>
++          <div className="flex items-center gap-3">
++            <button onClick={openCreateNodeModal} className="btn-secondary flex items-center gap-2">
++              <Plus size={18} />
++              Add Node
++            </button>
++            <button onClick={openCreateEdgeModal} className="btn-secondary flex items-center gap-2">
++              <LinkIcon size={18} />
++              Add Edge
++            </button>
++          </div>
++        </div>
++
++        <div className="flex-1 flex gap-6 overflow-hidden">
++          {/* Graph Container */}
++          <div 
++            className="flex-1 card p-0 overflow-hidden relative bg-slate-50" 
++            ref={containerRef}
++          >
++            <ForceGraph2D
++              width={dimensions.width}
++              height={dimensions.height}
++              graphData={graphData}
++              nodeLabel="label"
++              nodeColor={(node: any) => selectedNode?.id === node.id ? '#4f46e5' : '#3b82f6'}
++              nodeRelSize={6}
++              linkColor={(link: any) => selectedLink === link ? '#ef4444' : '#94a3b8'}
++              linkWidth={(link: any) => selectedLink === link ? 3 : 1}
++              linkLabel="type"
++              linkDirectionalArrowLength={3.5}
++              linkDirectionalArrowRelPos={1}
++              onNodeClick={handleNodeClick as any}
++              onLinkClick={handleLinkClick as any}
++              onBackgroundClick={handleBackgroundClick}
++              // To enable text on links we would need to draw on canvas but let's keep it simple with default ForceGraph behavior.
++            />
++            
++            {/* Quick stats overlay */}
++            <div className="absolute bottom-4 left-4 bg-white/80 backdrop-blur px-3 py-2 rounded-lg text-xs font-semibold text-muted shadow-sm border border-slate-200">
++              {graphData.nodes.length} Nodes • {graphData.links.length} Edges
++            </div>
++          </div>
++
++          {/* Inspector Panel */}
++          <div className="w-80 shrink-0 flex flex-col gap-4 overflow-y-auto">
++            {selectedNode ? (
++              <div className="card">
++                <div className="flex items-center justify-between mb-4">
++                  <h3 className="font-semibold text-ink flex items-center gap-2">
++                    <Network size={16} className="text-blue-600" />
++                    Node Details
++                  </h3>
++                  <button onClick={() => setSelectedNode(null)} className="text-muted hover:text-ink">
++                    <X size={16} />
++                  </button>
++                </div>
++                <div className="space-y-3">
++                  <div>
++                    <div className="text-xs text-muted uppercase tracking-wider">ID</div>
++                    <div className="font-medium text-sm break-all">{selectedNode.id}</div>
++                  </div>
++                  <div>
++                    <div className="text-xs text-muted uppercase tracking-wider">Label</div>
++                    <div className="font-medium text-sm">{selectedNode.label || '-'}</div>
++                  </div>
++                  <div>
++                    <div className="text-xs text-muted uppercase tracking-wider">Properties</div>
++                    <div className="text-sm bg-slate-50 p-2 rounded border border-slate-100 whitespace-pre-wrap font-mono text-xs">
++                      {selectedNode.properties || '-'}
++                    </div>
++                  </div>
++                </div>
++                <div className="mt-6 flex gap-2">
++                  <button onClick={openEditNodeModal} className="flex-1 btn-secondary text-sm py-1.5 flex justify-center gap-1">
++                    <Edit size={14} /> Edit
++                  </button>
++                  <button onClick={handleDeleteNode} className="flex-1 btn-secondary text-sm py-1.5 text-rose-600 hover:bg-rose-50 flex justify-center gap-1">
++                    <Trash2 size={14} /> Delete
++                  </button>
++                </div>
++                <div className="mt-2">
++                  <button onClick={openCreateEdgeModal} className="w-full btn-primary text-sm py-1.5 flex justify-center gap-1">
++                    <LinkIcon size={14} /> Connect
++                  </button>
++                </div>
++              </div>
++            ) : selectedLink ? (
++              <div className="card">
++                <div className="flex items-center justify-between mb-4">
++                  <h3 className="font-semibold text-ink flex items-center gap-2">
++                    <LinkIcon size={16} className="text-indigo-600" />
++                    Edge Details
++                  </h3>
++                  <button onClick={() => setSelectedLink(null)} className="text-muted hover:text-ink">
++                    <X size={16} />
++                  </button>
++                </div>
++                <div className="space-y-3">
++                  <div>
++                    <div className="text-xs text-muted uppercase tracking-wider">Source</div>
++                    <div className="font-medium text-sm break-all">
++                      {typeof selectedLink.source === 'object' ? selectedLink.source.id : selectedLink.source}
++                    </div>
++                  </div>
++                  <div>
++                    <div className="text-xs text-muted uppercase tracking-wider">Target</div>
++                    <div className="font-medium text-sm break-all">
++                      {typeof selectedLink.target === 'object' ? selectedLink.target.id : selectedLink.target}
++                    </div>
++                  </div>
++                  <div>
++                    <div className="text-xs text-muted uppercase tracking-wider">Type</div>
++                    <div className="font-medium text-sm">{selectedLink.type || '-'}</div>
++                  </div>
++                  <div>
++                    <div className="text-xs text-muted uppercase tracking-wider">Properties</div>
++                    <div className="text-sm bg-slate-50 p-2 rounded border border-slate-100 whitespace-pre-wrap font-mono text-xs">
++                      {selectedLink.properties || '-'}
++                    </div>
++                  </div>
++                </div>
++                <div className="mt-6 flex gap-2">
++                  <button onClick={openEditEdgeModal} className="flex-1 btn-secondary text-sm py-1.5 flex justify-center gap-1">
++                    <Edit size={14} /> Edit
++                  </button>
++                  <button onClick={handleDeleteEdge} className="flex-1 btn-secondary text-sm py-1.5 text-rose-600 hover:bg-rose-50 flex justify-center gap-1">
++                    <Trash2 size={14} /> Delete
++                  </button>
++                </div>
++              </div>
++            ) : (
++              <div className="card flex flex-col items-center justify-center text-center py-12 px-4 border-dashed border-2 border-slate-200">
++                <Network size={32} className="text-slate-300 mb-3" />
++                <h3 className="font-semibold text-ink mb-1">No Selection</h3>
++                <p className="text-sm text-muted">Click on a node or edge to view its details and manage it.</p>
++              </div>
++            )}
++          </div>
++        </div>
++
++        {/* Node Modal */}
++        {showNodeModal && (
++          <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50">
++            <div className="modal-panel p-6 w-full max-w-md">
++              <h2 className="text-xl font-semibold text-ink mb-4">
++                {nodeModalMode === 'create' ? 'Add Node' : 'Edit Node'}
++              </h2>
++              <form onSubmit={handleNodeSubmit} className="space-y-4">
++                <div>
++                  <label className="block text-sm font-semibold text-ink mb-1">ID (Unique) *</label>
++                  <input
++                    type="text"
++                    value={nodeForm.id}
++                    onChange={(e) => setNodeForm({ ...nodeForm, id: e.target.value })}
++                    className="input-field"
++                    required
++                    disabled={nodeModalMode === 'edit'}
++                  />
++                  {nodeModalMode === 'edit' && <p className="text-xs text-muted mt-1">ID cannot be changed</p>}
++                </div>
++                <div>
++                  <label className="block text-sm font-semibold text-ink mb-1">Label</label>
++                  <input
++                    type="text"
++                    value={nodeForm.label}
++                    onChange={(e) => setNodeForm({ ...nodeForm, label: e.target.value })}
++                    className="input-field"
++                    placeholder="e.g. Person, Company"
++                  />
++                </div>
++                <div>
++                  <label className="block text-sm font-semibold text-ink mb-1">Properties (JSON string)</label>
++                  <textarea
++                    value={nodeForm.properties}
++                    onChange={(e) => setNodeForm({ ...nodeForm, properties: e.target.value })}
++                    className="input-field font-mono text-sm"
++                    rows={4}
++                    placeholder='{"name": "John", "age": 30}'
++                  />
++                </div>
++                <div className="flex gap-3 pt-2">
++                  <button type="button" onClick={() => setShowNodeModal(false)} className="flex-1 btn-secondary">
++                    Cancel
++                  </button>
++                  <button type="submit" className="flex-1 btn-primary">
++                    {nodeModalMode === 'create' ? 'Save Node' : 'Update Node'}
++                  </button>
++                </div>
++              </form>
++            </div>
++          </div>
++        )}
++
++        {/* Edge Modal */}
++        {showEdgeModal && (
++          <div className="fixed inset-0 modal-overlay flex items-center justify-center z-50">
++            <div className="modal-panel p-6 w-full max-w-md">
++              <h2 className="text-xl font-semibold text-ink mb-4">
++                {edgeModalMode === 'create' ? 'Add Edge' : 'Edit Edge'}
++              </h2>
++              <form onSubmit={handleEdgeSubmit} className="space-y-4">
++                <div>
++                  <label className="block text-sm font-semibold text-ink mb-1">Source Node ID *</label>
++                  <input
++                    type="text"
++                    value={edgeForm.source}
++                    onChange={(e) => setEdgeForm({ ...edgeForm, source: e.target.value })}
++                    className="input-field"
++                    required
++                    disabled={edgeModalMode === 'edit'}
++                  />
++                </div>
++                <div>
++                  <label className="block text-sm font-semibold text-ink mb-1">Target Node ID *</label>
++                  <input
++                    type="text"
++                    value={edgeForm.target}
++                    onChange={(e) => setEdgeForm({ ...edgeForm, target: e.target.value })}
++                    className="input-field"
++                    required
++                    disabled={edgeModalMode === 'edit'}
++                  />
++                </div>
++                <div>
++                  <label className="block text-sm font-semibold text-ink mb-1">Relationship Type *</label>
++                  <input
++                    type="text"
++                    value={edgeForm.type}
++                    onChange={(e) => setEdgeForm({ ...edgeForm, type: e.target.value })}
++                    className="input-field"
++                    required
++                    disabled={edgeModalMode === 'edit'}
++                    placeholder="e.g. WORKS_AT, KNOWS"
++                  />
++                  {edgeModalMode === 'edit' && <p className="text-xs text-muted mt-1">Source, Target and Type identify the edge and cannot be changed</p>}
++                </div>
++                <div>
++                  <label className="block text-sm font-semibold text-ink mb-1">Properties (JSON string)</label>
++                  <textarea
++                    value={edgeForm.properties}
++                    onChange={(e) => setEdgeForm({ ...edgeForm, properties: e.target.value })}
++                    className="input-field font-mono text-sm"
++                    rows={4}
++                    placeholder='{"since": "2020", "role": "developer"}'
++                  />
++                </div>
++                <div className="flex gap-3 pt-2">
++                  <button type="button" onClick={() => setShowEdgeModal(false)} className="flex-1 btn-secondary">
++                    Cancel
++                  </button>
++                  <button type="submit" className="flex-1 btn-primary">
++                    {edgeModalMode === 'create' ? 'Save Edge' : 'Update Edge'}
++                  </button>
++                </div>
++              </form>
++            </div>
++          </div>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/frontend/components/Sidebar.tsx b/frontend/components/Sidebar.tsx
+index 129871a..6545c56 100644
+--- a/frontend/components/Sidebar.tsx
++++ b/frontend/components/Sidebar.tsx
+@@ -13,7 +13,8 @@ import {
+   Settings,
+   LogOut,
+   Mail,
+-  BookOpen
++  BookOpen,
++  Network
+ } from 'lucide-react';
+ import { useRouter } from 'next/navigation';
+ 
+@@ -26,6 +27,7 @@ const navItems = [
+   { href: '/emails', label: 'Emails', icon: Mail },
+   { href: '/reports', label: 'Reports', icon: BarChart3 },
+   { href: '/business', label: 'Business Background', icon: BookOpen },
++  { href: '/knowledge-graph', label: 'Knowledge Graph', icon: Network },
+ ];
+ 
+ export default function Sidebar() {
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+index fb6f0b3..d3b97d9 100644
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -174,3 +174,15 @@ export const businessBackground = {
+   update: (id: number, data: any) => api.put(`/business-background/${id}`, data),
+   delete: (id: number) => api.delete(`/business-background/${id}`),
+ };
++
++export const kg = {
++  getGraph: () => api.get('/graph'),
++  addNode: (data: { id: string; label: string; properties: string }) => api.post('/node', data),
++  updateNode: (data: { id: string; label: string; properties: string }) => api.put('/node', data),
++  deleteNode: (id: string) => api.delete(`/node/${id}`),
++  addEdge: (data: { source: string; target: string; type: string; properties: string }) => api.post('/edge', data),
++  updateEdge: (data: { source: string; target: string; type: string; properties: string }) => api.put('/edge', data),
++  deleteEdge: (source: string, target: string, type: string) => 
++    api.delete('/edge', { params: { source, target, type } }),
++};
++
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 467b7a6..32bf6d2 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -19,7 +19,8 @@
+         "next-pwa": "^5.6.0",
+         "react": "^18.2.0",
+         "react-data-table-component": "^7.7.0",
+-        "react-dom": "^18.2.0"
++        "react-dom": "^18.2.0",
++        "react-force-graph-2d": "^1.29.1"
+       },
+       "devDependencies": {
+         "@types/js-cookie": "^3.0.6",
+@@ -1889,6 +1890,12 @@
+         "tslib": "^2.4.0"
+       }
+     },
++    "node_modules/@tweenjs/tween.js": {
++      "version": "25.0.0",
++      "resolved": "https://registry.npmjs.org/@tweenjs/tween.js/-/tween.js-25.0.0.tgz",
++      "integrity": "sha512-XKLA6syeBUaPzx4j3qwMqzzq+V4uo72BnlbOjmuljLrRqdsd3qnzvZZoxvMHZ23ndsRS4aufU6JOZYpCbU6T1A==",
++      "license": "MIT"
++    },
+     "node_modules/@types/eslint": {
+       "version": "9.6.1",
+       "resolved": "https://registry.npmjs.org/@types/eslint/-/eslint-9.6.1.tgz",
+@@ -2174,6 +2181,15 @@
+       "license": "Apache-2.0",
+       "peer": true
+     },
++    "node_modules/accessor-fn": {
++      "version": "1.5.3",
++      "resolved": "https://registry.npmjs.org/accessor-fn/-/accessor-fn-1.5.3.tgz",
++      "integrity": "sha512-rkAofCwe/FvYFUlMB0v0gWmhqtfAtV1IUkdPbfhTUyYniu5LrC0A0UJkTH0Jv3S8SvwkmfuAlY+mQIJATdocMA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/acorn": {
+       "version": "8.16.0",
+       "resolved": "https://registry.npmjs.org/acorn/-/acorn-8.16.0.tgz",
+@@ -2515,6 +2531,16 @@
+         "node": ">=6.0.0"
+       }
+     },
++    "node_modules/bezier-js": {
++      "version": "6.1.4",
++      "resolved": "https://registry.npmjs.org/bezier-js/-/bezier-js-6.1.4.tgz",
++      "integrity": "sha512-PA0FW9ZpcHbojUCMu28z9Vg/fNkwTj5YhusSAjHHDfHDGLxJ6YUKrAN2vk1fP2MMOxVw4Oko16FMlRGVBGqLKg==",
++      "license": "MIT",
++      "funding": {
++        "type": "individual",
++        "url": "https://github.com/Pomax/bezierjs/blob/master/FUNDING.md"
++      }
++    },
+     "node_modules/big.js": {
+       "version": "5.2.2",
+       "resolved": "https://registry.npmjs.org/big.js/-/big.js-5.2.2.tgz",
+@@ -2708,6 +2734,18 @@
+       ],
+       "license": "CC-BY-4.0"
+     },
++    "node_modules/canvas-color-tracker": {
++      "version": "1.3.2",
++      "resolved": "https://registry.npmjs.org/canvas-color-tracker/-/canvas-color-tracker-1.3.2.tgz",
++      "integrity": "sha512-ryQkDX26yJ3CXzb3hxUVNlg1NKE4REc5crLBq661Nxzr8TNd236SaEf2ffYLXyI5tSABSeguHLqcVq4vf9L3Zg==",
++      "license": "MIT",
++      "dependencies": {
++        "tinycolor2": "^1.6.0"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/chokidar": {
+       "version": "3.6.0",
+       "resolved": "https://registry.npmjs.org/chokidar/-/chokidar-3.6.0.tgz",
+@@ -2898,6 +2936,222 @@
+       "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
+       "license": "MIT"
+     },
++    "node_modules/d3-array": {
++      "version": "3.2.4",
++      "resolved": "https://registry.npmjs.org/d3-array/-/d3-array-3.2.4.tgz",
++      "integrity": "sha512-tdQAmyA18i4J7wprpYq8ClcxZy3SC31QMeByyCFyRt7BVHdREQZ5lpzoe5mFEYZUWe+oq8HBvk9JjpibyEV4Jg==",
++      "license": "ISC",
++      "dependencies": {
++        "internmap": "1 - 2"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-binarytree": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/d3-binarytree/-/d3-binarytree-1.0.2.tgz",
++      "integrity": "sha512-cElUNH+sHu95L04m92pG73t2MEJXKu+GeKUN1TJkFsu93E5W8E9Sc3kHEGJKgenGvj19m6upSn2EunvMgMD2Yw==",
++      "license": "MIT"
++    },
++    "node_modules/d3-color": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/d3-color/-/d3-color-3.1.0.tgz",
++      "integrity": "sha512-zg/chbXyeBtMQ1LbD/WSoW2DpC3I0mpmPdW+ynRTj/x2DAWYrIY7qeZIHidozwV24m4iavr15lNwIwLxRmOxhA==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-dispatch": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-dispatch/-/d3-dispatch-3.0.1.tgz",
++      "integrity": "sha512-rzUyPU/S7rwUflMyLc1ETDeBj0NRuHKKAcvukozwhshr6g6c5d8zh4c2gQjY2bZ0dXeGLWc1PF174P2tVvKhfg==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-drag": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/d3-drag/-/d3-drag-3.0.0.tgz",
++      "integrity": "sha512-pWbUJLdETVA8lQNJecMxoXfH6x+mO2UQo8rSmZ+QqxcbyA3hfeprFgIT//HW2nlHChWeIIMwS2Fq+gEARkhTkg==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-dispatch": "1 - 3",
++        "d3-selection": "3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-ease": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-ease/-/d3-ease-3.0.1.tgz",
++      "integrity": "sha512-wR/XK3D3XcLIZwpbvQwQ5fK+8Ykds1ip7A2Txe0yxncXSdq1L9skcG7blcedkOX+ZcgxGAmLX1FrRGbADwzi0w==",
++      "license": "BSD-3-Clause",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-force-3d": {
++      "version": "3.0.6",
++      "resolved": "https://registry.npmjs.org/d3-force-3d/-/d3-force-3d-3.0.6.tgz",
++      "integrity": "sha512-4tsKHUPLOVkyfEffZo1v6sFHvGFwAIIjt/W8IThbp08DYAsXZck+2pSHEG5W1+gQgEvFLdZkYvmJAbRM2EzMnA==",
++      "license": "MIT",
++      "dependencies": {
++        "d3-binarytree": "1",
++        "d3-dispatch": "1 - 3",
++        "d3-octree": "1",
++        "d3-quadtree": "1 - 3",
++        "d3-timer": "1 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-format": {
++      "version": "3.1.2",
++      "resolved": "https://registry.npmjs.org/d3-format/-/d3-format-3.1.2.tgz",
++      "integrity": "sha512-AJDdYOdnyRDV5b6ArilzCPPwc1ejkHcoyFarqlPqT7zRYjhavcT3uSrqcMvsgh2CgoPbK3RCwyHaVyxYcP2Arg==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-interpolate": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-interpolate/-/d3-interpolate-3.0.1.tgz",
++      "integrity": "sha512-3bYs1rOD33uo8aqJfKP3JWPAibgw8Zm2+L9vBKEHJ2Rg+viTR7o5Mmv5mZcieN+FRYaAOWX5SJATX6k1PWz72g==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-color": "1 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-octree": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/d3-octree/-/d3-octree-1.1.0.tgz",
++      "integrity": "sha512-F8gPlqpP+HwRPMO/8uOu5wjH110+6q4cgJvgJT6vlpy3BEaDIKlTZrgHKZSp/i1InRpVfh4puY/kvL6MxK930A==",
++      "license": "MIT"
++    },
++    "node_modules/d3-quadtree": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-quadtree/-/d3-quadtree-3.0.1.tgz",
++      "integrity": "sha512-04xDrxQTDTCFwP5H6hRhsRcb9xxv2RzkcsygFzmkSIOJy3PeRJP7sNk3VRIbKXcog561P9oU0/rVH6vDROAgUw==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-scale": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/d3-scale/-/d3-scale-4.0.2.tgz",
++      "integrity": "sha512-GZW464g1SH7ag3Y7hXjf8RoUuAFIqklOAq3MRl4OaWabTFJY9PN/E1YklhXLh+OQ3fM9yS2nOkCoS+WLZ6kvxQ==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-array": "2.10.0 - 3",
++        "d3-format": "1 - 3",
++        "d3-interpolate": "1.2.0 - 3",
++        "d3-time": "2.1.1 - 3",
++        "d3-time-format": "2 - 4"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-scale-chromatic": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/d3-scale-chromatic/-/d3-scale-chromatic-3.1.0.tgz",
++      "integrity": "sha512-A3s5PWiZ9YCXFye1o246KoscMWqf8BsD9eRiJ3He7C9OBaxKhAd5TFCdEx/7VbKtxxTsu//1mMJFrEt572cEyQ==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-color": "1 - 3",
++        "d3-interpolate": "1 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-selection": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/d3-selection/-/d3-selection-3.0.0.tgz",
++      "integrity": "sha512-fmTRWbNMmsmWq6xJV8D19U/gw/bwrHfNXxrIN+HfZgnzqTHp9jOmKMhsTUjXOJnZOdZY9Q28y4yebKzqDKlxlQ==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-time": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/d3-time/-/d3-time-3.1.0.tgz",
++      "integrity": "sha512-VqKjzBLejbSMT4IgbmVgDjpkYrNWUYJnbCGo874u7MMKIWsILRX+OpX/gTk8MqjpT1A/c6HY2dCA77ZN0lkQ2Q==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-array": "2 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-time-format": {
++      "version": "4.1.0",
++      "resolved": "https://registry.npmjs.org/d3-time-format/-/d3-time-format-4.1.0.tgz",
++      "integrity": "sha512-dJxPBlzC7NugB2PDLwo9Q8JiTR3M3e4/XANkreKSUxF8vvXKqm1Yfq4Q5dl8budlunRVlUUaDUgFt7eA8D6NLg==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-time": "1 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-timer": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-timer/-/d3-timer-3.0.1.tgz",
++      "integrity": "sha512-ndfJ/JxxMd3nw31uyKoY2naivF+r29V+Lc0svZxe1JvvIRmi8hUsrMvdOwgS1o6uBHmiz91geQ0ylPP0aj1VUA==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/d3-transition": {
++      "version": "3.0.1",
++      "resolved": "https://registry.npmjs.org/d3-transition/-/d3-transition-3.0.1.tgz",
++      "integrity": "sha512-ApKvfjsSR6tg06xrL434C0WydLr7JewBB3V+/39RMHsaXTOG0zmt/OAXeng5M5LBm0ojmxJrpomQVZ1aPvBL4w==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-color": "1 - 3",
++        "d3-dispatch": "1 - 3",
++        "d3-ease": "1 - 3",
++        "d3-interpolate": "1 - 3",
++        "d3-timer": "1 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      },
++      "peerDependencies": {
++        "d3-selection": "2 - 3"
++      }
++    },
++    "node_modules/d3-zoom": {
++      "version": "3.0.0",
++      "resolved": "https://registry.npmjs.org/d3-zoom/-/d3-zoom-3.0.0.tgz",
++      "integrity": "sha512-b8AmV3kfQaqWAuacbPuNbL6vahnOJflOhexLzMMNLga62+/nh0JzvJ0aO/5a5MVgUFGS7Hu1P9P03o3fJkDCyw==",
++      "license": "ISC",
++      "dependencies": {
++        "d3-dispatch": "1 - 3",
++        "d3-drag": "2 - 3",
++        "d3-interpolate": "1 - 3",
++        "d3-selection": "2 - 3",
++        "d3-transition": "2 - 3"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/data-view-buffer": {
+       "version": "1.0.2",
+       "resolved": "https://registry.npmjs.org/data-view-buffer/-/data-view-buffer-1.0.2.tgz",
+@@ -3521,6 +3775,20 @@
+         "node": ">=8"
+       }
+     },
++    "node_modules/float-tooltip": {
++      "version": "1.7.5",
++      "resolved": "https://registry.npmjs.org/float-tooltip/-/float-tooltip-1.7.5.tgz",
++      "integrity": "sha512-/kXzuDnnBqyyWyhDMH7+PfP8J/oXiAavGzcRxASOMRHFuReDtofizLLJsf7nnDLAfEaMW4pVWaXrAjtnglpEkg==",
++      "license": "MIT",
++      "dependencies": {
++        "d3-selection": "2 - 3",
++        "kapsule": "^1.16",
++        "preact": "10"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/follow-redirects": {
+       "version": "1.16.0",
+       "resolved": "https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.16.0.tgz",
+@@ -3556,6 +3824,32 @@
+         "url": "https://github.com/sponsors/ljharb"
+       }
+     },
++    "node_modules/force-graph": {
++      "version": "1.51.4",
++      "resolved": "https://registry.npmjs.org/force-graph/-/force-graph-1.51.4.tgz",
++      "integrity": "sha512-TdJ2KbkoiDQ7NIRx8IPGD0mAXXpLhamS7c+b7W98b0MHG7lphnda1VOQX/98UDTsttIAdH4TcP0l0MauSnLK8w==",
++      "license": "MIT",
++      "dependencies": {
++        "@tweenjs/tween.js": "18 - 25",
++        "accessor-fn": "1",
++        "bezier-js": "3 - 6",
++        "canvas-color-tracker": "^1.3",
++        "d3-array": "1 - 3",
++        "d3-drag": "2 - 3",
++        "d3-force-3d": "2 - 3",
++        "d3-scale": "1 - 4",
++        "d3-scale-chromatic": "1 - 3",
++        "d3-selection": "2 - 3",
++        "d3-zoom": "2 - 3",
++        "float-tooltip": "^1.7",
++        "index-array-by": "1",
++        "kapsule": "^1.16",
++        "lodash-es": "4"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/form-data": {
+       "version": "4.0.5",
+       "resolved": "https://registry.npmjs.org/form-data/-/form-data-4.0.5.tgz",
+@@ -3934,6 +4228,15 @@
+         "node": ">= 4"
+       }
+     },
++    "node_modules/index-array-by": {
++      "version": "1.4.2",
++      "resolved": "https://registry.npmjs.org/index-array-by/-/index-array-by-1.4.2.tgz",
++      "integrity": "sha512-SP23P27OUKzXWEC/TOyWlwLviofQkCSCKONnc62eItjp69yCZZPqDQtr3Pw5gJDnPeUMqExmKydNZaJO0FU9pw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/inflight": {
+       "version": "1.0.6",
+       "resolved": "https://registry.npmjs.org/inflight/-/inflight-1.0.6.tgz",
+@@ -3965,6 +4268,15 @@
+         "node": ">= 0.4"
+       }
+     },
++    "node_modules/internmap": {
++      "version": "2.0.3",
++      "resolved": "https://registry.npmjs.org/internmap/-/internmap-2.0.3.tgz",
++      "integrity": "sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg==",
++      "license": "ISC",
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/is-array-buffer": {
+       "version": "3.0.5",
+       "resolved": "https://registry.npmjs.org/is-array-buffer/-/is-array-buffer-3.0.5.tgz",
+@@ -4437,6 +4749,15 @@
+         "node": ">=10"
+       }
+     },
++    "node_modules/jerrypick": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/jerrypick/-/jerrypick-1.1.2.tgz",
++      "integrity": "sha512-YKnxXEekXKzhpf7CLYA0A+oDP8V0OhICNCr5lv96FvSsDEmrb0GKM776JgQvHTMjr7DTTPEVv/1Ciaw0uEWzBA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/jest-worker": {
+       "version": "27.5.1",
+       "resolved": "https://registry.npmjs.org/jest-worker/-/jest-worker-27.5.1.tgz",
+@@ -4527,6 +4848,18 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/kapsule": {
++      "version": "1.16.3",
++      "resolved": "https://registry.npmjs.org/kapsule/-/kapsule-1.16.3.tgz",
++      "integrity": "sha512-4+5mNNf4vZDSwPhKprKwz3330iisPrb08JyMgbsdFrimBCKNHecua/WBwvVg3n7vwx0C1ARjfhwIpbrbd9n5wg==",
++      "license": "MIT",
++      "dependencies": {
++        "lodash-es": "4"
++      },
++      "engines": {
++        "node": ">=12"
++      }
++    },
+     "node_modules/leven": {
+       "version": "3.1.0",
+       "resolved": "https://registry.npmjs.org/leven/-/leven-3.1.0.tgz",
+@@ -4602,6 +4935,12 @@
+       "integrity": "sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==",
+       "license": "MIT"
+     },
++    "node_modules/lodash-es": {
++      "version": "4.18.1",
++      "resolved": "https://registry.npmjs.org/lodash-es/-/lodash-es-4.18.1.tgz",
++      "integrity": "sha512-J8xewKD/Gk22OZbhpOVSwcs60zhd95ESDwezOFuA3/099925PdHJ7OFHNTGtajL3AlZkykD32HykiMo+BIBI8A==",
++      "license": "MIT"
++    },
+     "node_modules/lodash.debounce": {
+       "version": "4.0.8",
+       "resolved": "https://registry.npmjs.org/lodash.debounce/-/lodash.debounce-4.0.8.tgz",
+@@ -5301,6 +5640,16 @@
+       "integrity": "sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==",
+       "license": "MIT"
+     },
++    "node_modules/preact": {
++      "version": "10.29.1",
++      "resolved": "https://registry.npmjs.org/preact/-/preact-10.29.1.tgz",
++      "integrity": "sha512-gQCLc/vWroE8lIpleXtdJhTFDogTdZG9AjMUpVkDf2iTCNwYNWA+u16dL41TqUDJO4gm2IgrcMv3uTpjd4Pwmg==",
++      "license": "MIT",
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/preact"
++      }
++    },
+     "node_modules/pretty-bytes": {
+       "version": "5.6.0",
+       "resolved": "https://registry.npmjs.org/pretty-bytes/-/pretty-bytes-5.6.0.tgz",
+@@ -5313,6 +5662,17 @@
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
++    "node_modules/prop-types": {
++      "version": "15.8.1",
++      "resolved": "https://registry.npmjs.org/prop-types/-/prop-types-15.8.1.tgz",
++      "integrity": "sha512-oj87CgZICdulUohogVAR7AjlC0327U4el4L6eAvOqCeudMDVU0NThNaV+b9Df4dXgSP1gXMTnPdhfe/2qDH5cg==",
++      "license": "MIT",
++      "dependencies": {
++        "loose-envify": "^1.4.0",
++        "object-assign": "^4.1.1",
++        "react-is": "^16.13.1"
++      }
++    },
+     "node_modules/proxy-from-env": {
+       "version": "2.1.0",
+       "resolved": "https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-2.1.0.tgz",
+@@ -5403,6 +5763,44 @@
+         "react": "^18.3.1"
+       }
+     },
++    "node_modules/react-force-graph-2d": {
++      "version": "1.29.1",
++      "resolved": "https://registry.npmjs.org/react-force-graph-2d/-/react-force-graph-2d-1.29.1.tgz",
++      "integrity": "sha512-1Rl/1Z3xy2iTHKj6a0jRXGyiI86xUti81K+jBQZ+Oe46csaMikp47L5AjrzA9hY9fNGD63X8ffrqnvaORukCuQ==",
++      "license": "MIT",
++      "dependencies": {
++        "force-graph": "^1.51",
++        "prop-types": "15",
++        "react-kapsule": "^2.5"
++      },
++      "engines": {
++        "node": ">=12"
++      },
++      "peerDependencies": {
++        "react": "*"
++      }
++    },
++    "node_modules/react-is": {
++      "version": "16.13.1",
++      "resolved": "https://registry.npmjs.org/react-is/-/react-is-16.13.1.tgz",
++      "integrity": "sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==",
++      "license": "MIT"
++    },
++    "node_modules/react-kapsule": {
++      "version": "2.5.7",
++      "resolved": "https://registry.npmjs.org/react-kapsule/-/react-kapsule-2.5.7.tgz",
++      "integrity": "sha512-kifAF4ZPD77qZKc4CKLmozq6GY1sBzPEJTIJb0wWFK6HsePJatK3jXplZn2eeAt3x67CDozgi7/rO8fNQ/AL7A==",
++      "license": "MIT",
++      "dependencies": {
++        "jerrypick": "^1.1.1"
++      },
++      "engines": {
++        "node": ">=12"
++      },
++      "peerDependencies": {
++        "react": ">=16.13.1"
++      }
++    },
+     "node_modules/read-cache": {
+       "version": "1.0.0",
+       "resolved": "https://registry.npmjs.org/read-cache/-/read-cache-1.0.0.tgz",
+@@ -6395,6 +6793,12 @@
+         "node": ">=0.8"
+       }
+     },
++    "node_modules/tinycolor2": {
++      "version": "1.6.0",
++      "resolved": "https://registry.npmjs.org/tinycolor2/-/tinycolor2-1.6.0.tgz",
++      "integrity": "sha512-XPaBkWQJdsf3pLKJV9p4qN/S+fm2Oj8AIPo1BTUhg5oxkvm9+SVEGFdhyOz7tTdUTfvxMiAs4sp6/eZO2Ew+pw==",
++      "license": "MIT"
++    },
+     "node_modules/tinyglobby": {
+       "version": "0.2.16",
+       "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.16.tgz",
+diff --git a/frontend/package.json b/frontend/package.json
+index 1b06c93..df9da33 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -20,7 +20,8 @@
+     "next-pwa": "^5.6.0",
+     "react": "^18.2.0",
+     "react-data-table-component": "^7.7.0",
+-    "react-dom": "^18.2.0"
++    "react-dom": "^18.2.0",
++    "react-force-graph-2d": "^1.29.1"
+   },
+   "devDependencies": {
+     "@types/js-cookie": "^3.0.6",
+diff --git a/frontend/public/sw.js b/frontend/public/sw.js
+index 5a224a5..3b39219 100644
+--- a/frontend/public/sw.js
++++ b/frontend/public/sw.js
+@@ -1 +1 @@
+-if(!self.define){let e,s={};const t=(t,n)=>(t=new URL(t+".js",n).href,s[t]||new Promise(s=>{if("document"in self){const e=document.createElement("script");e.src=t,e.onload=s,document.head.appendChild(e)}else e=t,importScripts(t),s()}).then(()=>{let e=s[t];if(!e)throw new Error(`Module ${t} didn’t register its module`);return e}));self.define=(n,r)=>{const c=e||("document"in self?document.currentScript.src:"")||location.href;if(s[c])return;let i={};const a=e=>t(e,c),o={module:{uri:c},exports:i,require:a};s[c]=Promise.all(n.map(e=>o[e]||a(e))).then(e=>(r(...e),i))}}define(["./workbox-e7b4d9bd"],function(e){"use strict";importScripts(),self.skipWaiting(),e.clientsClaim(),e.precacheAndRoute([{url:"/_next/app-build-manifest.json",revision:"08ebb2eeab841adacd5863f444619385"},{url:"/_next/static/chunks/122-1f7fb7cb5880bab3.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/32-db4817ab10d5ad07.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/460-f9e28e421c8b17bf.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/615-cd86579f8cea6630.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/69-93cddc9a5bf7a982.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/806-31c8934bac79c6b4.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/975-3bdd2c1026ccbb7a.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/_not-found-49cbef3cc99cb200.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/api/auth/callback/calendar/page-fd32170d0cd2ad46.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/api/auth/callback/google/page-98a99e283d2c9ad0.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/business/page-69051339b8852d40.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/calendar/page-98ad2d0b23154883.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/contacts/%5Bid%5D/page-cc6aebd8175a3c70.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/contacts/page-3baf354b4c72814b.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/dashboard/page-2b245a80bc7b414a.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/emails/page-e3d1d046af891e64.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/layout-ffa584b293ec4992.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/oauth2/callback/page-d5a8f11fb3191884.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/opportunities/%5Bid%5D/page-71f9676a6c4137fb.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/opportunities/page-d88a0c0758d8cf66.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/page-a8518979d18d874f.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/register/page-60d75c942f2b8059.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/reports/page-1effa378beb594ca.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/settings/page-0c9b353131385fdb.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/tasks/%5Bid%5D/page-6f297ad6a8bce07f.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/tasks/page-1b98bbeae05c2486.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/fd9d1056-22a8115f3ca18d53.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/framework-f66176bb897dc684.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/main-app-4193016c8c87a6d6.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/main-e1e988ca12815501.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/pages/_app-75f6107b0260711c.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/pages/_error-9a890acb1e81c3fc.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/polyfills-c67a75d1b6f99dc8.js",revision:"837c0df77fd5009c9e46d446188ecfd0"},{url:"/_next/static/chunks/webpack-05c98084111c925f.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/css/e8767c2d0e4c317f.css",revision:"e8767c2d0e4c317f"},{url:"/_next/static/jHrYqtnIDFrYoKRTOewj_/_buildManifest.js",revision:"c5f17930a62cbeeb1aeb4f70619dcb61"},{url:"/_next/static/jHrYqtnIDFrYoKRTOewj_/_ssgManifest.js",revision:"b6652df95db52feb4daf4eca35380933"},{url:"/icons/icon-192.png",revision:"3687f8e858902007c52fa42b562766c0"},{url:"/icons/icon-512.png",revision:"f8019cedc7d6706e7573d4d7a62cdad9"},{url:"/manifest.webmanifest",revision:"b483e86981949255c5dc9fd9e3f231ee"}],{ignoreURLParametersMatching:[]}),e.cleanupOutdatedCaches(),e.registerRoute("/",new e.NetworkFirst({cacheName:"start-url",plugins:[{cacheWillUpdate:async({request:e,response:s,event:t,state:n})=>s&&"opaqueredirect"===s.type?new Response(s.body,{status:200,statusText:"OK",headers:s.headers}):s}]}),"GET"),e.registerRoute(({url:e})=>e.pathname.startsWith("/api/"),new e.NetworkOnly({cacheName:"api-network-only",plugins:[]}),"GET"),e.registerRoute(/^https:\/\/fonts\.googleapis\.com\/.*/i,new e.CacheFirst({cacheName:"google-fonts-stylesheets",plugins:[]}),"GET"),e.registerRoute(/^https:\/\/fonts\.gstatic\.com\/.*/i,new e.CacheFirst({cacheName:"google-fonts-webfonts",plugins:[]}),"GET")});
++if(!self.define){let s,e={};const t=(t,a)=>(t=new URL(t+".js",a).href,e[t]||new Promise(e=>{if("document"in self){const s=document.createElement("script");s.src=t,s.onload=e,document.head.appendChild(s)}else s=t,importScripts(t),e()}).then(()=>{let s=e[t];if(!s)throw new Error(`Module ${t} didn’t register its module`);return s}));self.define=(a,i)=>{const n=s||("document"in self?document.currentScript.src:"")||location.href;if(e[n])return;let c={};const u=s=>t(s,n),r={module:{uri:n},exports:c,require:u};e[n]=Promise.all(a.map(s=>r[s]||u(s))).then(s=>(i(...s),c))}}define(["./workbox-e7b4d9bd"],function(s){"use strict";importScripts(),self.skipWaiting(),s.clientsClaim(),s.precacheAndRoute([{url:"/_next/app-build-manifest.json",revision:"6679a1b0a33ba58b893512a5cb2393b9"},{url:"/_next/static/chunks/153.b9a0c30dccdbba99.js",revision:"b9a0c30dccdbba99"},{url:"/_next/static/chunks/20-8dde42f34b71fb5b.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/242-e30c7d55e83b249e.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/32-b953662c90a39ddf.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/606-ce383751e59dd1fc.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/615-cd86579f8cea6630.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/69-87bbb419c0c52676.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/902-1a194bb840879a33.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/_not-found-a4feeca436024781.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/api/auth/callback/calendar/page-f0cddfa2d49a5421.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/api/auth/callback/google/page-3d7bb696b4ac73f7.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/business/page-abb5a27ebe863bf2.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/calendar/page-d6de1ad4acf5de68.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/contacts/%5Bid%5D/page-0a094d809c11716a.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/contacts/page-73646fc3c413b33d.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/dashboard/page-7d1b41ee40ce6b60.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/emails/page-a2119cf95ac2b5d6.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/knowledge-graph/page-e924b4b81381fb6a.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/layout-e70f9379066f2729.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/oauth2/callback/page-5ac706380431fdc3.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/opportunities/%5Bid%5D/page-0571ae03156f7950.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/opportunities/page-73f1f152b194e5f4.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/page-984ae8cd65eb0cdf.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/register/page-1d3a5945fecacaaa.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/reports/page-a682c52e8b817b93.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/settings/page-3a2e6031b2edb1a2.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/tasks/%5Bid%5D/page-5d6d26f6fbe4ca00.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/app/tasks/page-d8f7fa0bc6941fd8.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/fd9d1056-cc5124bef8a0db05.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/framework-f66176bb897dc684.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/main-4b108f167d52ad90.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/main-app-4193016c8c87a6d6.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/pages/_app-75f6107b0260711c.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/pages/_error-9a890acb1e81c3fc.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/chunks/polyfills-c67a75d1b6f99dc8.js",revision:"837c0df77fd5009c9e46d446188ecfd0"},{url:"/_next/static/chunks/webpack-a8f0260a760ad67d.js",revision:"kTm-bWL6PsD435CHuE3tW"},{url:"/_next/static/css/e96ba22c48e1865d.css",revision:"e96ba22c48e1865d"},{url:"/_next/static/kTm-bWL6PsD435CHuE3tW/_buildManifest.js",revision:"c5f17930a62cbeeb1aeb4f70619dcb61"},{url:"/_next/static/kTm-bWL6PsD435CHuE3tW/_ssgManifest.js",revision:"b6652df95db52feb4daf4eca35380933"},{url:"/icons/icon-192.png",revision:"3687f8e858902007c52fa42b562766c0"},{url:"/icons/icon-512.png",revision:"f8019cedc7d6706e7573d4d7a62cdad9"},{url:"/manifest.webmanifest",revision:"b483e86981949255c5dc9fd9e3f231ee"}],{ignoreURLParametersMatching:[]}),s.cleanupOutdatedCaches(),s.registerRoute("/",new s.NetworkFirst({cacheName:"start-url",plugins:[{cacheWillUpdate:async({request:s,response:e,event:t,state:a})=>e&&"opaqueredirect"===e.type?new Response(e.body,{status:200,statusText:"OK",headers:e.headers}):e}]}),"GET"),s.registerRoute(({url:s})=>s.pathname.startsWith("/api/"),new s.NetworkOnly({cacheName:"api-network-only",plugins:[]}),"GET"),s.registerRoute(/^https:\/\/fonts\.googleapis\.com\/.*/i,new s.CacheFirst({cacheName:"google-fonts-stylesheets",plugins:[]}),"GET"),s.registerRoute(/^https:\/\/fonts\.gstatic\.com\/.*/i,new s.CacheFirst({cacheName:"google-fonts-webfonts",plugins:[]}),"GET")});
+diff --git a/test_db.py b/test_db.py
+new file mode 100644
+index 0000000..6fa0eaf
+--- /dev/null
++++ b/test_db.py
+@@ -0,0 +1,5 @@
++from database import SessionLocal
++from models import BusinessRule
++db = SessionLocal()
++print("DB connection OK")
++db.close()
+diff --git a/test_db_lock.py b/test_db_lock.py
+new file mode 100644
+index 0000000..e575cc9
+--- /dev/null
++++ b/test_db_lock.py
+@@ -0,0 +1,7 @@
++import ladybug as lb
++db1 = lb.Database("test.lbug")
++try:
++    db2 = lb.Database("test.lbug")
++    print("Success")
++except Exception as e:
++    print(f"Error: {e}")
+diff --git a/test_eval.py b/test_eval.py
+new file mode 100644
+index 0000000..0183033
+--- /dev/null
++++ b/test_eval.py
+@@ -0,0 +1,5 @@
++import asyncio
++from agents.cs_agent import evaluate_kg_trigger
++
++print("Empty string:", evaluate_kg_trigger(""))
++print("Ayam:", evaluate_kg_trigger("i love ayam"))
+diff --git a/test_ladybug.py b/test_ladybug.py
+new file mode 100644
+index 0000000..6872347
+--- /dev/null
++++ b/test_ladybug.py
+@@ -0,0 +1,20 @@
++import ladybug as lb
++
++def test_db():
++    db = lb.Database(":memory:")
++    conn = lb.Connection(db)
++    
++    try:
++        conn.execute("CREATE NODE TABLE Entity(id STRING, label STRING, PRIMARY KEY(id))")
++    except RuntimeError as e:
++        pass
++        
++    try:
++        conn.execute("CREATE REL TABLE RelatedTo(FROM Entity TO Entity, type STRING)")
++    except RuntimeError as e:
++        pass
++        
++    print("Schema created.")
++
++if __name__ == "__main__":
++    test_db()

@@ -7,6 +7,7 @@ from sqlalchemy import (
     Numeric,
     ForeignKey,
     Date,
+    Boolean,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -20,9 +21,27 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password_hash = Column(String)
     full_name = Column(String)
-    role = Column(String, default="user")
+    role = Column(String, default="user", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Gmail API fields
+    google_email = Column(String, nullable=True, index=True)
+    google_access_token = Column(String, nullable=True)
+    google_refresh_token = Column(String, nullable=True)
+    gmail_watch_expiration = Column(DateTime, nullable=True)
+    gmail_watch_history_id = Column(String, nullable=True)
+
+    # Google Calendar API fields
+    calendar_access_token = Column(String, nullable=True)
+    calendar_refresh_token = Column(String, nullable=True)
+
+    # WhatsApp Business API fields
+    agent_phone_number = Column(String, nullable=True, index=True)
+
+    whatsapp_numbers = relationship("WhatsAppPhoneNumber", back_populates="user")
+    chatery_whatsapp_sessions = relationship("ChateryWhatsAppSession", back_populates="user")
+    telegram_bots = relationship("TelegramBot", back_populates="user")
 
     contacts = relationship(
         "Contact", back_populates="owner", foreign_keys="Contact.user_id"
@@ -34,13 +53,15 @@ class User(Base):
     activities = relationship(
         "Activity", back_populates="owner", foreign_keys="Activity.user_id"
     )
+    emails = relationship("Email", back_populates="owner")
+    business_rule = relationship("BusinessRule", uselist=False, back_populates="user")
 
 
 class Contact(Base):
     __tablename__ = "contacts"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     name = Column(String)
     email = Column(String)
     phone = Column(String)
@@ -59,12 +80,12 @@ class Opportunity(Base):
     __tablename__ = "opportunities"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String)
     value = Column(Numeric(10, 2))
-    stage = Column(String, default="lead")
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
+    stage = Column(String, default="lead", index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     expected_close_date = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -80,15 +101,15 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     title = Column(String)
     description = Column(Text, nullable=True)
-    status = Column(String, default="pending")
-    priority = Column(String, default="medium")
+    status = Column(String, default="pending", index=True)
+    priority = Column(String, default="medium", index=True)
     due_date = Column(DateTime, nullable=True)
-    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True)
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
+    opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -102,16 +123,142 @@ class Activity(Base):
     __tablename__ = "activities"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    type = Column(String)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    type = Column(String, index=True)
     description = Column(Text, nullable=True)
     source = Column(String, nullable=True)
     external_id = Column(String, nullable=True)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True)
-    opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
+    opportunity_id = Column(Integer, ForeignKey("opportunities.id"), nullable=True, index=True)
     scheduled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     owner = relationship("User", back_populates="activities", foreign_keys=[user_id])
     contact = relationship("Contact", back_populates="activities")
     opportunity = relationship("Opportunity", back_populates="activities")
+
+
+class Email(Base):
+    __tablename__ = "emails"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    gmail_id = Column(String, unique=True, index=True)
+    thread_id = Column(String, nullable=True, index=True)
+    subject = Column(String, nullable=True)
+    from_email = Column(String, index=True)
+    to_email = Column(String)
+    snippet = Column(Text, nullable=True)
+    body = Column(Text, nullable=True)
+    html_body = Column(Text, nullable=True)
+    label_ids = Column(String, nullable=True)
+    history_id = Column(String, index=True)
+    is_read = Column(Boolean, default=False, index=True)
+    received_at = Column(DateTime, nullable=True)
+    stored_at = Column(DateTime, default=datetime.utcnow)
+
+    owner = relationship("User", back_populates="emails")
+
+
+class WhatsAppPhoneNumber(Base):
+    __tablename__ = "whatsapp_phone_numbers"
+
+    phone_number_id = Column(String, primary_key=True)
+    display_phone_number = Column(String, unique=True, index=True)
+    access_token = Column(String, nullable=False)
+    app_secret = Column(String, nullable=True)  # Meta App Secret for HMAC-SHA256 webhook validation
+    verify_token = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="whatsapp_numbers")
+
+
+class AgentSession(Base):
+    __tablename__ = "agent_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(String, unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    messages = Column(Text, nullable=True)  # JSON string
+    state = Column(Text, nullable=True)  # JSON string
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
+
+
+class ChateryWhatsAppSession(Base):
+    __tablename__ = "chatery_whatsapp_sessions"
+
+    session_id = Column(String, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String, default="disconnected")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="chatery_whatsapp_sessions")
+
+class TelegramBot(Base):
+    __tablename__ = "telegram_bots"
+
+    bot_token = Column(String, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    username = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="telegram_bots")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
+    session_id = Column(String, index=True)
+    role = Column(String, index=True)
+    content = Column(Text, nullable=True)
+    tool_calls_json = Column(Text, nullable=True)
+    tool_results_json = Column(Text, nullable=True)
+    token_count = Column(Integer, nullable=True)
+    source = Column(String, nullable=True)
+    is_compacted = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+    contact = relationship("Contact")
+
+
+class BusinessBackground(Base):
+    __tablename__ = "business_backgrounds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
+    category = Column(String, index=True)
+    title = Column(String)
+    content = Column(Text)
+    tags_json = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+    priority = Column(Integer, default=0)
+    usage_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User")
+
+
+class BusinessRule(Base):
+    __tablename__ = "business_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, index=True)
+    rules_text = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="business_rule")
+
+

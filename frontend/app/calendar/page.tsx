@@ -205,7 +205,7 @@ export default function CalendarPage() {
 
   const handleAuthorizeCalendar = async () => {
     try {
-      const redirectUri = `${window.location.origin}/oauth2/callback`;
+      const redirectUri = `${window.location.origin}/api/auth/callback/calendar`;
       const response = await googleCalendar.oauthAuthorize(redirectUri);
       const authUrl = response.data?.authorization_url;
       if (!authUrl) {

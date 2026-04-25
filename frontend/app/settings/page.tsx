@@ -2,10 +2,15 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { googleCalendar } from '@/lib/api';
-import { User, Mail, Calendar, CheckCircle2, XCircle, Zap, Cloud, ShieldCheck } from 'lucide-react';
+import { googleCalendar, whatsapp, telegram, chatery } from '@/lib/api';
+import { User, Mail, Calendar, CheckCircle2, XCircle, Zap, Cloud, ShieldCheck, MessageSquare } from 'lucide-react';
 
 export default function SettingsPage() {
+  const [chateryConnected, setChateryConnected] = useState(false);
+  const [chateryQrCode, setChateryQrCode] = useState<string | null>(null);
+  const [isPollingQr, setIsPollingQr] = useState(false);
+  const [showChateryWarning, setShowChateryWarning] = useState(false);
+
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -24,9 +29,35 @@ export default function SettingsPage() {
     zapier: false,
     cloud: false,
     sso: false,
+    whatsapp: false,
+    telegram: false,
   });
   const [activeIntegration, setActiveIntegration] = useState<null | string>(null);
   const [integrationFields, setIntegrationFields] = useState<any>({});
+  const [whatsappConfig, setWhatsappConfig] = useState<any>(null);
+
+  useEffect(() => {
+    let qrInterval: NodeJS.Timeout;
+    
+    if (isPollingQr && !chateryQrCode && user?.id) {
+      qrInterval = setInterval(async () => {
+        try {
+          const qrRes = await chatery.qr(user.id);
+          if (qrRes.data?.data?.qrCode) {
+            setChateryQrCode(qrRes.data.data.qrCode);
+            setIsPollingQr(false); // Stop polling once we have the QR
+          }
+        } catch (err: any) {
+          // If 400 or 404, it likely means "not ready yet", so we keep polling
+          console.log('Waiting for QR code...', err.response?.data?.detail || err.message);
+        }
+      }, 3000);
+    }
+
+    return () => {
+      if (qrInterval) clearInterval(qrInterval);
+    };
+  }, [isPollingQr, chateryQrCode, user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -48,6 +79,8 @@ export default function SettingsPage() {
         zapier: localStorage.getItem('integration_zapier') === 'on',
         cloud: localStorage.getItem('integration_cloud') === 'on',
         sso: localStorage.getItem('integration_sso') === 'on',
+        whatsapp: localStorage.getItem('integration_whatsapp') === 'on',
+        telegram: localStorage.getItem('integration_telegram') === 'on',
       };
       if (isMounted) {
         setIntegrationStatus(baseStatus);
@@ -78,20 +111,113 @@ export default function SettingsPage() {
     };
 
     loadSettings();
+
+    const checkWhatsAppStatus = async () => {
+      const storedPhoneId = localStorage.getItem('whatsapp_phone_number_id');
+      if (storedPhoneId) {
+        try {
+          const response = await whatsapp.getConfig(storedPhoneId);
+          if (response.data) {
+            setWhatsappConfig(response.data);
+            localStorage.setItem('integration_whatsapp', 'on');
+            setIntegrationStatus((prev) => ({ ...prev, whatsapp: true }));
+          }
+        } catch (error) {
+          localStorage.removeItem('whatsapp_phone_number_id');
+          localStorage.setItem('integration_whatsapp', 'off');
+        }
+      }
+    };
+    checkWhatsAppStatus();
+
+    const checkTelegramStatus = async () => {
+      const storedBotToken = localStorage.getItem('telegram_bot_token');
+      if (storedBotToken) {
+        try {
+          const response = await telegram.getConfig(storedBotToken);
+          if (response.data) {
+            localStorage.setItem('integration_telegram', 'on');
+            setIntegrationStatus((prev) => ({ ...prev, telegram: true }));
+          }
+        } catch (error) {
+          localStorage.removeItem('telegram_bot_token');
+          localStorage.setItem('integration_telegram', 'off');
+        }
+      }
+    };
+    checkTelegramStatus();
+    const checkChateryStatus = async () => {
+      try {
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          const user = JSON.parse(userStr);
+          const res = await chatery.status(user.id);
+          setChateryConnected(res.data.status === 'connected' || res.data.status === 'qr_ready' || res.data.status === 'connecting');
+        }
+      } catch (err) {
+        console.error('Failed to check Chatery status', err);
+      }
+    };
+    checkChateryStatus();
+
     return () => {
       isMounted = false;
     };
   }, [router]);
 
-  const handleConnect = (key: string) => {
-    setActiveIntegration(key);
-    if (key === 'calendar') {
-      setIntegrationFields({
-        oauthJson: '',
-        testEmail: calendarTestEmail || 'fakhrulhakimy93@gmail.com',
+
+  const handleConfigureEmail = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/gmail/oauth/authorize', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       });
-    } else {
-      setIntegrationFields({});
+      if (response.ok) {
+        const data = await response.json();
+        if (data.authorization_url) {
+          window.location.href = data.authorization_url;
+        }
+      } else {
+        alert('Failed to get authorization URL');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error connecting to Gmail');
+    }
+  };
+
+  const handleConnect = (key: string) => {
+    if (key === 'calendar' || key === 'email') {
+      return;
+    }
+    setActiveIntegration(key);
+    setIntegrationFields({});
+  };
+
+  const handleConnectGoogleCalendar = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/gmail/oauth/authorize', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.authorization_url) {
+          console.log('[Settings] Redirecting to Google OAuth...');
+          window.location.href = data.authorization_url;
+        } else {
+          alert('Authorization URL not received');
+        }
+      } else {
+        alert('Failed to start OAuth');
+      }
+    } catch (err) {
+      console.error('OAuth error:', err);
+      alert('Error connecting to Google');
     }
   };
 
@@ -99,6 +225,10 @@ export default function SettingsPage() {
     try {
       if (key === 'calendar') {
         await googleCalendar.clearCredentials();
+      } else if (key === 'whatsapp') {
+        localStorage.removeItem('whatsapp_phone_number_id');
+      } else if (key === 'telegram') {
+        localStorage.removeItem('telegram_bot_token');
       }
       localStorage.setItem(`integration_${key}`, 'off');
       setIntegrationStatus((prev) => ({ ...prev, [key]: false }));
@@ -140,6 +270,46 @@ export default function SettingsPage() {
           configured: Boolean(status.data?.oauth_configured),
           authorized: Boolean(status.data?.authorized),
         });
+      } else if (key === 'whatsapp') {
+        const userData = localStorage.getItem('user');
+        const user = userData ? JSON.parse(userData) : null;
+        if (!user?.id) {
+          window.alert('User not found. Please login again.');
+          return;
+        }
+        await whatsapp.createConfig({
+          phone_number_id: fields.phone_number_id,
+          display_phone_number: fields.display_phone_number,
+          access_token: fields.access_token,
+          app_secret: fields.app_secret || undefined,
+          verify_token: fields.verify_token,
+          user_id: user.id,
+        });
+        localStorage.setItem('whatsapp_phone_number_id', fields.phone_number_id);
+        localStorage.setItem(`integration_${key}`, 'on');
+        setIntegrationStatus((prev) => ({ ...prev, [key]: true }));
+        setWhatsappConfig({
+          phone_number_id: fields.phone_number_id,
+          display_phone_number: fields.display_phone_number,
+          user_id: user.id,
+          has_app_secret: Boolean(fields.app_secret),
+        });
+      } else if (key === 'telegram') {
+        const userData = localStorage.getItem('user');
+        const user = userData ? JSON.parse(userData) : null;
+        if (!user?.id) {
+          window.alert('User not found. Please login again.');
+          return;
+        }
+        const webhookUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/api/telegram/webhook/${fields.bot_token}`;
+        await telegram.createConfig({
+          bot_token: fields.bot_token,
+          user_id: user.id,
+          webhook_url: webhookUrl,
+        });
+        localStorage.setItem('telegram_bot_token', fields.bot_token);
+        localStorage.setItem(`integration_${key}`, 'on');
+        setIntegrationStatus((prev) => ({ ...prev, [key]: true }));
       } else {
         localStorage.setItem(`integration_${key}`, 'on');
         setIntegrationStatus((prev) => ({ ...prev, [key]: true }));
@@ -147,8 +317,34 @@ export default function SettingsPage() {
       setActiveIntegration(null);
     } catch (error) {
       console.error('Failed to save integration', error);
+      window.alert('Failed to save integration. Check console for details.');
     }
   };
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (chateryQrCode) {
+      interval = setInterval(async () => {
+        try {
+          if (!user?.id) return;
+          const res = await chatery.status(user.id);
+          if (res.data?.status === 'connected') {
+            setChateryConnected(true);
+            setChateryQrCode(null);
+            window.alert('WhatsApp connected successfully!');
+          } else if (res.data?.status === 'disconnected') {
+            setChateryConnected(false);
+            setChateryQrCode(null);
+          }
+        } catch (err) {
+          console.error('Polling chatery status failed', err);
+        }
+      }, 3000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [chateryQrCode, user?.id]);
 
   if (loading) {
     return (
@@ -161,9 +357,51 @@ export default function SettingsPage() {
     );
   }
 
+  const handleDisconnectChatery = async () => {
+    try {
+      if (!user?.id) return;
+      const webhookUrl = `${window.location.origin}/api/chatery/webhook`;
+      await chatery.disconnect({ user_id: user.id, webhook_url: webhookUrl });
+      setChateryConnected(false);
+      setChateryQrCode(null);
+      setIsPollingQr(false);
+    } catch (error) {
+      console.error('Failed to disconnect Chatery', error);
+    }
+  };
+
+  const handleConnectChatery = async () => {
+    setShowChateryWarning(false);
+    try {
+      if (!user?.id) {
+        window.alert('User not found. Please login again.');
+        return;
+      }
+      const webhookUrl = `${window.location.origin}/api/chatery/webhook`;
+      const response = await chatery.connect({
+        user_id: user.id,
+        webhook_url: webhookUrl,
+      });
+
+      if (response.data?.success) {
+        setChateryConnected(true);
+        const sessionData = response.data.data;
+        if (sessionData?.qrCode) {
+          setChateryQrCode(sessionData.qrCode);
+        } else {
+          // Trigger polling if the QR code isn't immediately returned
+          setIsPollingQr(true);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to connect Chatery', error);
+      window.alert('Failed to connect Unofficial WhatsApp API.');
+    }
+  };
+
   const handleAuthorizeCalendar = async () => {
     try {
-      const redirectUri = `${window.location.origin}/oauth2/callback`;
+      const redirectUri = `${window.location.origin}/api/auth/callback/google`;
       const response = await googleCalendar.oauthAuthorize(redirectUri);
       const authUrl = response.data?.authorization_url;
       if (!authUrl) {
@@ -251,15 +489,16 @@ export default function SettingsPage() {
                   name="Google Email"
                   desc="Sync your Gmail inbox and send emails from CRM."
                   status={integrationStatus.email ? 'on' : 'off'}
-                  onConnect={() => handleConnect('email')}
+                  onConnect={handleConfigureEmail}
                   onDisconnect={() => handleDisconnect('email')}
+                  customConnectText="Configure"
                 />
                 <IntegrationBox
                   icon={<Calendar size={22} className="text-blue-600" />}
                   name="Google Calendar"
                   desc="Sync events, meetings, and reminders."
                   status={integrationStatus.calendar ? 'on' : 'off'}
-                  onConnect={() => handleConnect('calendar')}
+                  onConnect={handleConnectGoogleCalendar}
                   onDisconnect={() => handleDisconnect('calendar')}
                 />
                 <IntegrationBox
@@ -286,6 +525,33 @@ export default function SettingsPage() {
                   onConnect={() => handleConnect('sso')}
                   onDisconnect={() => handleDisconnect('sso')}
                 />
+                <IntegrationBox
+                  icon={<MessageSquare size={22} className="text-green-500" />}
+                  name="WhatsApp Bot (Official)"
+                  desc="Receive and reply to WhatsApp messages using Meta API."
+                  status={integrationStatus.whatsapp ? 'on' : 'off'}
+                  onConnect={() => handleConnect('whatsapp')}
+                  onDisconnect={() => handleDisconnect('whatsapp')}
+                />
+                
+                <IntegrationBox
+                  icon={<MessageSquare size={22} className="text-emerald-600" />}
+                  name="WhatsApp Bot (Unofficial)"
+                  desc="Connect WhatsApp via QR Code. Use at your own risk."
+                  status={chateryConnected ? 'on' : 'off'}
+                  onConnect={() => setShowChateryWarning(true)}
+                  onDisconnect={handleDisconnectChatery}
+                />
+
+                <IntegrationBox
+                  icon={<MessageSquare size={22} className="text-blue-500" />}
+                  name="Telegram Bot"
+                  desc="Receive and reply to Telegram messages."
+                  status={integrationStatus.telegram ? 'on' : 'off'}
+                  onConnect={() => handleConnect('telegram')}
+                  onDisconnect={() => handleDisconnect('telegram')}
+                />
+
               </div>
               {activeIntegration && (
                 <IntegrationModal
@@ -332,18 +598,70 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+      
+      {/* Warning Modal */}
+      {showChateryWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="modal-panel w-full max-w-md p-6 relative animate-fade-up">
+            <button className="absolute top-3 right-3 text-muted" onClick={() => setShowChateryWarning(false)}>&times;</button>
+            <h3 className="text-lg font-semibold text-red-600 mb-2">Warning: Unofficial API</h3>
+            <p className="text-sm text-ink mb-4">
+              You are about to connect an unofficial WhatsApp API. Meta does not endorse this. 
+              <strong> You run the risk of having your WhatsApp account banned.</strong> We are not responsible for any bans or issues.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setShowChateryWarning(false)}>Cancel</button>
+              <button className="btn-primary bg-red-600 hover:bg-red-700 border-red-600" onClick={handleConnectChatery}>
+                I Understand, Connect
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QR Code Modal */}
+      {(chateryQrCode || isPollingQr) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="modal-panel w-full max-w-md p-6 relative animate-fade-up text-center">
+            <button className="absolute top-3 right-3 text-muted" onClick={() => {
+              setChateryQrCode(null);
+              setIsPollingQr(false);
+            }}>&times;</button>
+            <h3 className="text-lg font-semibold text-ink mb-2">Scan QR Code</h3>
+            <p className="text-sm text-muted mb-4">
+              Open WhatsApp on your phone, go to Linked Devices, and scan this QR code.
+            </p>
+            <div className="flex justify-center mb-4">
+              {chateryQrCode ? (
+                <img src={chateryQrCode.startsWith('data:') ? chateryQrCode : `data:image/png;base64,${chateryQrCode}`} alt="WhatsApp QR Code" className="w-64 h-64 border rounded" />
+              ) : (
+                <div className="w-64 h-64 border rounded flex flex-col items-center justify-center bg-wash">
+                  <div className="text-muted animate-pulse">Generating QR Code...</div>
+                  <div className="text-xs text-muted mt-2">Please wait</div>
+                </div>
+              )}
+            </div>
+            <button className="btn-primary w-full" onClick={() => {
+              setChateryQrCode(null);
+              setIsPollingQr(false);
+            }}>Close</button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
 
 // --- IntegrationBox component ---
-function IntegrationBox({ icon, name, desc, status, onConnect, onDisconnect }: {
+function IntegrationBox({ icon, name, desc, status, onConnect, onDisconnect, customConnectText }: {
   icon: React.ReactNode;
   name: string;
   desc: string;
   status: 'on' | 'off';
   onConnect: () => void;
   onDisconnect: () => void;
+  customConnectText?: string;
 }) {
   return (
     <div className="flex flex-col justify-between bg-wash rounded-2xl p-4 shadow-sm border border-transparent hover:border-blue-200 transition-all">
@@ -363,7 +681,7 @@ function IntegrationBox({ icon, name, desc, status, onConnect, onDisconnect }: {
         {status === 'on' ? (
           <button className="btn-ghost text-xs font-semibold text-blue-700" onClick={onDisconnect}>Disconnect</button>
         ) : (
-          <button className="btn-ghost text-xs font-semibold text-muted" onClick={onConnect}>Connect</button>
+          <button className="btn-ghost text-xs font-semibold text-muted" onClick={onConnect}>{customConnectText || "Connect"}</button>
         )}
       </div>
     </div>
@@ -410,6 +728,148 @@ function IntegrationModal({ type, onClose, onSave, fields, setFields }: {
     placeholder = 'provider-id';
     fieldKey = 'providerId';
   }
+
+
+  if (type === 'telegram') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+        <div className="modal-panel w-full max-w-lg p-6 relative animate-fade-up max-h-[90vh] overflow-y-auto">
+          <button className="absolute top-3 right-3 text-muted" onClick={onClose}>&times;</button>
+          <h3 className="text-lg font-semibold text-ink mb-2">Configure Telegram Bot</h3>
+          <p className="text-sm text-muted mb-4">Enter your Telegram Bot Token below.</p>
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              onSave(type, fields);
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Bot Token</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="123456789:ABCdefGHI..."
+                value={fields.bot_token || ''}
+                onChange={e => setFields({ ...fields, bot_token: e.target.value })}
+                required
+              />
+              <p className="text-xs text-muted mt-1">
+                You can get a bot token by talking to BotFather on Telegram.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn-primary">Connect Bot</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+  if (type === 'whatsapp') {
+    const webhookUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/api/whatsapp/webhook`;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+        <div className="modal-panel w-full max-w-lg p-6 relative animate-fade-up max-h-[90vh] overflow-y-auto">
+          <button className="absolute top-3 right-3 text-muted" onClick={onClose}>&times;</button>
+          <h3 className="text-lg font-semibold text-ink mb-2">Configure WhatsApp Bot</h3>
+          <p className="text-sm text-muted mb-4">Enter your WhatsApp Business API credentials below.</p>
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              onSave(type, fields);
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Phone Number ID</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="1067947496408186"
+                value={fields.phone_number_id || ''}
+                onChange={e => setFields({ ...fields, phone_number_id: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Display Phone Number</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="+1234567890"
+                value={fields.display_phone_number || ''}
+                onChange={e => setFields({ ...fields, display_phone_number: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Access Token</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="EAAZBKKZBYcZC7s..."
+                value={fields.access_token || ''}
+                onChange={e => setFields({ ...fields, access_token: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">Verify Token</label>
+              <input
+                className="input-field"
+                type="text"
+                placeholder="your_verify_token"
+                value={fields.verify_token || ''}
+                onChange={e => setFields({ ...fields, verify_token: e.target.value })}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-ink mb-1">App Secret <span className="text-xs text-muted font-normal">(optional — for webhook signature validation)</span></label>
+              <input
+                className="input-field"
+                type="password"
+                placeholder="your_meta_app_secret"
+                value={fields.app_secret || ''}
+                onChange={e => setFields({ ...fields, app_secret: e.target.value })}
+              />
+              <p className="text-xs text-muted mt-1">
+                Found in your Meta App Dashboard → Settings → Basic → App Secret. Enables HMAC-SHA256 webhook validation.
+              </p>
+            </div>
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+              <label className="block text-sm font-semibold text-ink mb-2">Webhook URL</label>
+              <div className="flex items-center gap-2">
+                <input
+                  className="input-field text-sm flex-1"
+                  type="text"
+                  value={webhookUrl}
+                  readOnly
+                />
+                <button
+                  type="button"
+                  className="btn-ghost text-xs whitespace-nowrap"
+                  onClick={() => navigator.clipboard.writeText(webhookUrl)}
+                >
+                  Copy
+                </button>
+              </div>
+              <p className="text-xs text-muted mt-2">
+                Configure this URL in your Meta WhatsApp Cloud API webhook settings.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
+              <button type="submit" className="btn-primary">Save Configuration</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
       <div className="modal-panel w-full max-w-md p-6 relative animate-fade-up">

@@ -14,6 +14,75 @@ TASK_STATUSES = ["pending", "in_progress", "completed"]
 TASK_PRIORITIES = ["low", "medium", "high"]
 ACTIVITY_TYPES = ["call", "email", "meeting", "demo"]
 
+# Realistic CRM Data
+FIRST_NAMES = ["John", "Sarah", "Michael", "Emily", "David", "Jennifer", "Robert", "Lisa", "James", "Amanda",
+               "William", "Maria", "Richard", "Jessica", "Joseph", "Karen", "Thomas", "Nancy", "Charles", "Angela",
+               "Daniel", "Melissa", "Matthew", "Donna", "Mark", "Carol", "Donald", "Margaret", "Steven", "Ashley"]
+
+LAST_NAMES = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
+              "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
+              "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson"]
+
+COMPANY_NAMES = ["TechCorp Solutions", "Digital Innovations Inc.", "CloudBase Systems", "DataFlow Analytics",
+                 "NetSecure Technologies", "GreenEnergy Systems", "FinTech Ventures", "MediCare Solutions",
+                 "LogiShip Logistics", "ConsultPro Services", "RetailHub Global", "ManufactureTech Industries",
+                 "EduTech Platforms", "RealEstate Direct", "HealthPlus Clinic", "AutoDrive Motors",
+                 "FoodChain Distributors", "AirTravel Services", "ConstructBuild Corp", "DesignStudio Creative"]
+
+JOB_TITLES = ["CEO", "CTO", "VP Sales", "VP Marketing", "Sales Manager", "Operations Manager", "Project Manager",
+              "Business Development Manager", "Account Executive", "Solutions Architect", "Business Analyst",
+              "Product Manager", "Procurement Manager", "IT Director", "CFO"]
+
+ACTIVITY_DESCRIPTIONS = [
+    "Discussed pricing and contract terms",
+    "Presented product demo and ROI analysis",
+    "Reviewed technical requirements and architecture",
+    "Negotiated SLA terms and support packages",
+    "Introduced to procurement team for budget approval",
+    "Addressed concerns about integration with existing systems",
+    "Scheduled follow-up meeting for stakeholder alignment",
+    "Reviewed competitor analysis and competitive advantages",
+    "Discussed implementation timeline and resource allocation",
+    "Provided case studies from similar industry implementations",
+    "Clarified licensing and renewal options",
+    "Introduced to legal team for contract review",
+    "Conducted needs assessment workshop",
+    "Provided training overview for their team",
+    "Finalized pricing proposal and quote"
+]
+
+TASK_DESCRIPTIONS = [
+    "Follow up on proposal from last meeting",
+    "Prepare technical documentation",
+    "Schedule demo with key stakeholders",
+    "Send contract for review",
+    "Get CFO approval on budget",
+    "Coordinate with implementation team",
+    "Prepare ROI analysis and business case",
+    "Update stakeholder on project status",
+    "Prepare final presentation for executive approval",
+    "Arrange training session for users"
+]
+
+OPPORTUNITY_TITLES = [
+    "Cloud Migration Project",
+    "Digital Transformation Initiative",
+    "ERP System Implementation",
+    "CRM Software License",
+    "Data Analytics Platform",
+    "Cybersecurity Solutions",
+    "Marketing Automation Platform",
+    "Business Intelligence Suite",
+    "Supply Chain Optimization",
+    "Customer Portal Development",
+    "Mobile App Development",
+    "IT Infrastructure Upgrade",
+    "Managed IT Services Contract",
+    "SaaS Subscription Bundle",
+    "Process Automation Initiative"
+]
+
+
 
 def reset_user_data(db: Session, user: User, delete_user: bool = True) -> None:
     db.query(Activity).filter(Activity.user_id == user.id).delete(
@@ -102,14 +171,19 @@ def seed_demo_data(
             return
 
         contacts = []
-        for i in range(1, contacts_count + 1):
+        for i in range(contacts_count):
+            first_name = random.choice(FIRST_NAMES)
+            last_name = random.choice(LAST_NAMES)
+            company = random.choice(COMPANY_NAMES)
+            # Clean company name for email: remove spaces and periods
+            company_email = company.lower().replace(' ', '').replace('.', '')
             contact = Contact(
                 user_id=user.id,
-                name=f"Contact {i}",
-                email=f"contact{i}@example.com",
-                phone=f"555-01{i:02d}",
-                company=f"Company {i}",
-                notes="Seeded demo contact",
+                name=f"{first_name} {last_name}",
+                email=f"{first_name.lower()}.{last_name.lower()}@{company_email}.com",
+                phone=f"+1-{random.randint(200, 999)}-{random.randint(200, 999)}-{random.randint(1000, 9999)}",
+                company=company,
+                notes=f"{random.choice(JOB_TITLES)} at {company}. Interested in optimizing operations.",
             )
             db.add(contact)
             contacts.append(contact)
@@ -118,17 +192,18 @@ def seed_demo_data(
             db.refresh(contact)
 
         opportunities = []
-        for i in range(1, opportunities_count + 1):
+        for i in range(opportunities_count):
             stage = random.choice(STAGES)
-            value = Decimal(random.randint(5_000, 45_000))
+            # More realistic deal values: $10k-$500k
+            value = Decimal(random.randint(10, 500) * 1000)
             contact = random.choice(contacts)
             opportunity = Opportunity(
                 user_id=user.id,
-                title=f"Opportunity {i}",
+                title=random.choice(OPPORTUNITY_TITLES),
                 value=value,
                 stage=stage,
                 contact_id=contact.id,
-                expected_close_date=date.today() + timedelta(days=random.randint(7, 120)),
+                expected_close_date=date.today() + timedelta(days=random.randint(7, 180)),
             )
             db.add(opportunity)
             opportunities.append(opportunity)
@@ -137,17 +212,16 @@ def seed_demo_data(
             db.refresh(opportunity)
 
         tasks = []
-        for i in range(1, tasks_count + 1):
+        for i in range(tasks_count):
             task = Task(
                 user_id=user.id,
-                title=f"Task {i}",
-                description="Seeded demo task",
+                title=random.choice(TASK_DESCRIPTIONS),
+                description=random.choice(TASK_DESCRIPTIONS) + " - " + ("High urgency" if random.random() > 0.7 else "Standard"),
                 status=random.choice(TASK_STATUSES),
                 priority=random.choice(TASK_PRIORITIES),
-                due_date=datetime.now(timezone.utc)
-                + timedelta(days=random.randint(1, 21)),
-                contact_id=random.choice(contacts).id,
-                opportunity_id=random.choice(opportunities).id,
+                due_date=datetime.now(timezone.utc) + timedelta(days=random.randint(1, 30)),
+                contact_id=random.choice(contacts).id if contacts else None,
+                opportunity_id=random.choice(opportunities).id if opportunities else None,
             )
             db.add(task)
             tasks.append(task)
@@ -155,15 +229,14 @@ def seed_demo_data(
         for task in tasks:
             db.refresh(task)
 
-        for i in range(1, activities_count + 1):
+        for i in range(activities_count):
             activity = Activity(
                 user_id=user.id,
                 type=random.choice(ACTIVITY_TYPES),
-                description="Seeded demo activity",
-                contact_id=random.choice(contacts).id,
-                opportunity_id=random.choice(opportunities).id,
-                scheduled_at=datetime.now(timezone.utc)
-                + timedelta(days=random.randint(-5, 10)),
+                description=random.choice(ACTIVITY_DESCRIPTIONS),
+                contact_id=random.choice(contacts).id if contacts else None,
+                opportunity_id=random.choice(opportunities).id if opportunities else None,
+                scheduled_at=datetime.now(timezone.utc) + timedelta(days=random.randint(-10, 15)),
             )
             db.add(activity)
         db.commit()

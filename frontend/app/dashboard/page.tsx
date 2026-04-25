@@ -2,8 +2,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
-import { reports, tasks as tasksApi, opportunities as opportunitiesApi } from '@/lib/api';
-import { Users, CheckSquare, DollarSign, TrendingUp, Clock, Sparkles, Target } from 'lucide-react';
+import { reports, tasks as tasksApi, opportunities as opportunitiesApi, businessBackground as businessApi } from '@/lib/api';
+import { getCache, setCache, preloadUserData, getPreloadedData } from '@/lib/cache';
+import { Users, CheckSquare, DollarSign, TrendingUp, Clock, Sparkles, Target, AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -11,7 +13,9 @@ export default function DashboardPage() {
   const [pipeline, setPipeline] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [opportunities, setOpportunities] = useState<any[]>([]);
+  const [hasBusinessBackground, setHasBusinessBackground] = useState<boolean>(true);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -19,25 +23,53 @@ export default function DashboardPage() {
       router.push('/');
       return;
     }
-    loadDashboard();
+
+    const cachedData = getPreloadedData();
+    if (cachedData.metrics && cachedData.pipeline && cachedData.tasks && cachedData.opportunities) {
+      console.log('[Dashboard] Using cached data');
+      setMetrics(cachedData.metrics);
+      setPipeline(cachedData.pipeline);
+      setTasks(cachedData.tasks);
+      setOpportunities(cachedData.opportunities);
+      setLoading(false);
+      
+      preloadUserData().then(() => {
+        console.log('[Dashboard] Background refresh complete');
+        loadDashboard();
+      });
+    } else {
+      loadDashboard();
+    }
   }, [router]);
 
   const loadDashboard = async () => {
     try {
-      const [metricsRes, pipelineRes, tasksRes, oppsRes] = await Promise.all([
+      setIsRefreshing(true);
+      const [metricsRes, pipelineRes, tasksRes, oppsRes, bgRes] = await Promise.all([
         reports.dashboard(),
         reports.pipeline(),
         tasksApi.list(),
         opportunitiesApi.list(),
+        businessApi.list()
       ]);
+      
       setMetrics(metricsRes.data);
       setPipeline(pipelineRes.data);
       setTasks(tasksRes.data);
       setOpportunities(oppsRes.data);
+      setHasBusinessBackground(bgRes.data && bgRes.data.length > 0);
+      
+      setCache('metrics', metricsRes.data);
+      setCache('pipeline', pipelineRes.data);
+      setCache('tasks', tasksRes.data);
+      setCache('opportunities', oppsRes.data);
+      
+      console.log('[Dashboard] Data loaded and cached');
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -142,6 +174,21 @@ export default function DashboardPage() {
             Track your shared pipeline, priorities, and next actions.
           </p>
         </div>
+
+        {!hasBusinessBackground && (
+          <div className="mb-8 rounded-2xl bg-amber-50 border border-amber-200 p-4 flex items-start gap-3 animate-fade-up">
+            <AlertTriangle className="text-amber-500 mt-0.5 shrink-0" size={20} />
+            <div>
+              <h3 className="font-semibold text-amber-800">Setup your Business Context</h3>
+              <p className="text-amber-700 text-sm mt-1">
+                Your AI agent works best when it knows about your business. Add some company background, products, or FAQs.
+              </p>
+              <Link href="/business" className="inline-block mt-3 text-sm font-semibold text-amber-800 hover:text-amber-900 underline underline-offset-2">
+                Add Business Background →
+              </Link>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
           {statCards.map((stat, i) => {

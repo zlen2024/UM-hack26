@@ -1,0 +1,1510 @@
+FILE: backend/agents/cs_agent.py
+diff --git a/backend/agents/cs_agent.py b/backend/agents/cs_agent.py
+index 24e0130..c91b1c1 100644
+--- a/backend/agents/cs_agent.py
++++ b/backend/agents/cs_agent.py
+@@ -2,7 +2,7 @@ import os
+ import json
+ import logging
+ import re
+-from typing import Dict, Any, Optional, TypedDict, List
++from typing import Dict, Any, Optional, TypedDict, List, Callable
+ from openai import OpenAI
+ from langgraph.graph import StateGraph, START, END
+ from .graph.tools import CRM_TOOLS
+@@ -105,15 +105,17 @@ def gatekeeper_node(state: AgentState) -> dict:
+ RULES:
+ 1. You MUST respond in strictly valid JSON format matching the schema: {{"response": "string", "agent_loop": boolean, "query": "string"}}.
+ 2. If the user's input is a simple greeting, general chit-chat, or easily answerable without looking up systems, set "agent_loop" to false and provide a direct "response".
+-3. If the user's input requires checking orders, retrieving business data, troubleshooting, or anything complex, set "agent_loop" to true, leave "response" blank (""), and extract the core intent into "query"."""
++3. If the user's input requires checking orders, retrieving business data, troubleshooting, or anything complex, set "agent_loop" to true, extract the core intent into "query", AND provide a polite preliminary "response" (e.g., "Let me check that for you right away...")."""
+ 
+     try:
++        messages_for_gatekeeper = [{"role": "system", "content": system_prompt}]
++        for m in state.get("messages", []):
++            messages_for_gatekeeper.append(m)
++        messages_for_gatekeeper.append({"role": "user", "content": state.get("user_input", "")})
++
+         response = client.chat.completions.create(
+             model="ilmu-glm-5.1",
+-            messages=[
+-                {"role": "system", "content": system_prompt},
+-                {"role": "user", "content": state.get("user_input", "")},
+-            ],
++            messages=messages_for_gatekeeper,
+             temperature=0,
+             max_tokens=2000,
+             response_format={
+@@ -138,7 +140,11 @@ RULES:
+             "query": ""
+         }
+ 
+-    return {"gatekeeper_response": result}
++    # Append the current query to the conversation history so the manager has the full context
++    query_to_add = result.get('query') or user_input
++    new_messages = state.get("messages", []) + [{"role": "user", "content": query_to_add}]
++
++    return {"gatekeeper_response": result, "messages": new_messages}
+ 
+ def manager_node(state: AgentState) -> dict:
+     logger.info("--- [NODE: MANAGER] Executing ---")
+@@ -290,7 +296,7 @@ graph = builder.compile()
+ 
+ # --- Main Process Functions ---
+ 
+-def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
++def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+     """Process WhatsApp message and return AI response using LangGraph workflow.
+ 
+     Args:
+@@ -299,6 +305,7 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
+             - contact_name: str
+             - phone: str
+             - message: str
++        send_callback: Optional callback function to send intermediate messages back to the user.
+ 
+     Returns:
+         AI response from Ilmu AI model
+@@ -309,28 +316,69 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
+     message = message_data.get("message", "")
+ 
+     try:
+-        initial_state = {
+-            "user_input": message,
+-            "user_id": user_id,
+-            "contact_name": contact_name,
+-            "messages": []
+-        }
++        from database import SessionLocal
++        from agents.memory import save_message, get_history
+         
+-        final_state = graph.invoke(initial_state)
++        session_id = f"wa_{phone}"
++        db = SessionLocal()
+         
+-        gatekeeper_resp = final_state.get("gatekeeper_response", {})
+-        if not gatekeeper_resp.get("agent_loop", False):
+-            ai_response = gatekeeper_resp.get("response", "")
+-        else:
+-            messages = final_state.get("messages", [])
+-            if messages:
+-                last_message = messages[-1]
+-                ai_response = last_message.get("content", "")
++        try:
++            # Save user message
++            save_message(db, session_id, "user", message, user_id=user_id)
++            
++            # Load history (up to 20 messages for context)
++            db_history = get_history(db, session_id, limit=20, user_id=user_id)
++            
++            # Format history for the agent
++            history_messages = []
++            for msg in db_history[:-1]:  # Exclude the current message we just saved
++                if msg.role in ["user", "assistant", "system"]:
++                    history_messages.append({"role": msg.role, "content": msg.content})
++            
++            initial_state = {
++                "user_input": message,
++                "user_id": user_id,
++                "contact_name": contact_name,
++                "messages": history_messages
++            }
++            
++            # Execute the graph and capture intermediate outputs via stream()
++            current_state = initial_state.copy()
++            for event in graph.stream(initial_state):
++                for node_name, node_state in event.items():
++                    current_state.update(node_state)
++                    
++                    # If Gatekeeper just finished and it decided to loop, send the preliminary response!
++                    if node_name == "gatekeeper":
++                        gatekeeper_resp = node_state.get("gatekeeper_response", {})
++                        if gatekeeper_resp.get("agent_loop", False):
++                            preliminary_msg = gatekeeper_resp.get("response", "")
++                            if preliminary_msg and send_callback:
++                                logger.info(f"[WhatsApp] Sending preliminary response: {preliminary_msg}")
++                                send_callback(preliminary_msg)
++            
++            final_state = current_state
++
++            gatekeeper_resp = final_state.get("gatekeeper_response", {})
++            if not gatekeeper_resp.get("agent_loop", False):
++                ai_response = gatekeeper_resp.get("response", "")
+             else:
+-                ai_response = "I'm sorry, I'm having trouble processing your request right now."
++                messages = final_state.get("messages", [])
++                if messages:
++                    last_message = messages[-1]
++                    ai_response = last_message.get("content", "")
++                else:
++                    ai_response = "I'm sorry, I'm having trouble processing your request right now."
++            
++            # Save assistant response
++            if ai_response:
++                save_message(db, session_id, "assistant", ai_response, user_id=user_id)
++                
++        finally:
++            db.close()
+             
+     except Exception as e:
+-        print(f"[WhatsApp] Error calling LangGraph: {e}")
++        logger.error(f"[WhatsApp] Error calling LangGraph: {e}", exc_info=True)
+         ai_response = "I'm sorry, I'm having trouble processing your request right now."
+ 
+     return {
+@@ -340,7 +388,7 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
+         "phone": phone,
+     }
+ 
+-def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
++def process_telegram_message(message_data: Dict[str, Any], send_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+     """Process Telegram message and return AI response using LangGraph workflow.
+ 
+     Args:
+@@ -349,6 +397,7 @@ def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
+             - contact_name: str
+             - chat_id: str
+             - message: str
++        send_callback: Optional callback function to send intermediate messages back to the user.
+ 
+     Returns:
+         AI response from Ilmu AI model
+@@ -359,28 +408,67 @@ def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
+     message = message_data.get("message", "")
+ 
+     try:
+-        initial_state = {
+-            "user_input": message,
+-            "user_id": user_id,
+-            "contact_name": contact_name,
+-            "messages": []
+-        }
++        from database import SessionLocal
++        from agents.memory import save_message, get_history
+         
+-        final_state = graph.invoke(initial_state)
++        session_id = f"tg_{chat_id}"
++        db = SessionLocal()
+         
+-        gatekeeper_resp = final_state.get("gatekeeper_response", {})
+-        if not gatekeeper_resp.get("agent_loop", False):
+-            ai_response = gatekeeper_resp.get("response", "")
+-        else:
+-            messages = final_state.get("messages", [])
+-            if messages:
+-                last_message = messages[-1]
+-                ai_response = last_message.get("content", "")
++        try:
++            # Save user message
++            save_message(db, session_id, "user", message, user_id=user_id)
++            
++            # Load history (up to 20 messages for context)
++            db_history = get_history(db, session_id, limit=20, user_id=user_id)
++            
++            history_messages = []
++            for msg in db_history[:-1]:  # Exclude the current message we just saved
++                if msg.role in ["user", "assistant", "system"]:
++                    history_messages.append({"role": msg.role, "content": msg.content})
++            
++            initial_state = {
++                "user_input": message,
++                "user_id": user_id,
++                "contact_name": contact_name,
++                "messages": history_messages
++            }
++            
++            # Execute the graph and capture intermediate outputs via stream()
++            current_state = initial_state.copy()
++            for event in graph.stream(initial_state):
++                for node_name, node_state in event.items():
++                    current_state.update(node_state)
++                    
++                    if node_name == "gatekeeper":
++                        gatekeeper_resp = node_state.get("gatekeeper_response", {})
++                        if gatekeeper_resp.get("agent_loop", False):
++                            preliminary_msg = gatekeeper_resp.get("response", "")
++                            if preliminary_msg and send_callback:
++                                logger.info(f"[Telegram] Sending preliminary response: {preliminary_msg}")
++                                send_callback(preliminary_msg)
++            
++            final_state = current_state
++
++            gatekeeper_resp = final_state.get("gatekeeper_response", {})
++            if not gatekeeper_resp.get("agent_loop", False):
++                ai_response = gatekeeper_resp.get("response", "")
+             else:
+-                ai_response = "I'm sorry, I'm having trouble processing your request right now."
++                messages = final_state.get("messages", [])
++                if messages:
++                    last_message = messages[-1]
++                    ai_response = last_message.get("content", "")
++                else:
++                    ai_response = "I'm sorry, I'm having trouble processing your request right now."
++            
++            # Save assistant response
++            if ai_response:
++                save_message(db, session_id, "assistant", ai_response, user_id=user_id)
++                
++        finally:
++            db.close()
+             
+     except Exception as e:
+-        print(f"[Telegram] Error calling LangGraph: {e}")
++        logger.error(f"[Telegram] Error calling LangGraph: {e}", exc_info=True)
+         ai_response = "I'm sorry, I'm having trouble processing your request right now."
+ 
+     return {
+END_FILE
+FILE: backend/agents/graph/agent.py
+diff --git a/backend/agents/graph/agent.py b/backend/agents/graph/agent.py
+index de11d16..9ce2c9c 100644
+--- a/backend/agents/graph/agent.py
++++ b/backend/agents/graph/agent.py
+@@ -79,10 +79,32 @@ def should_use_tools(state: AgentState) -> str:
+ def agent_node(state: AgentState) -> dict:
+     """Main agent node using LLM."""
+     messages = state.get("messages", [])
++    user_id = state.get("user_id", 1)
++    
++    # Load business context
++    from agents.business_context import get_active
++    from database import SessionLocal
++    db = SessionLocal()
++    try:
++        active_bgs = get_active(db, user_id)
++        bg_text = ""
++        if active_bgs:
++            bg_text = "\n\nBusiness Context:\n" + "\n".join(
++                [f"[{bg.category}] {bg.title}: {bg.content}" for bg in active_bgs]
++            )
++    finally:
++        db.close()
++    
++    system_content = SYSTEM_PROMPT + bg_text
++    api_messages = [{"role": "system", "content": system_content}]
+     
+-    api_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+     for msg in messages:
+-        role = "user" if msg.type == "human" else "assistant"
++        if msg.type == "human":
++            role = "user"
++        elif msg.type == "system":
++            role = "system"
++        else:
++            role = "assistant"
+         api_messages.append({"role": role, "content": msg.content})
+     
+     # Get tool definitions
+@@ -185,10 +207,33 @@ app = get_app()
+ 
+ def run_agent(message: str, user_id: int = 1, thread_id: Optional[str] = None) -> dict:
+     """Run the CRM agent with a message."""
++    import uuid
++    from database import SessionLocal
++    from agents.memory import save_message, get_history
++    
++    session_id = thread_id or str(uuid.uuid4())
++    db = SessionLocal()
++    
+     try:
++        # Load chat history
++        db_history = get_history(db, session_id, limit=50, user_id=user_id)
++        history_messages = []
++        for msg in db_history:
++            if msg.role == "user":
++                history_messages.append(("user", msg.content))
++            elif msg.role == "assistant":
++                history_messages.append(("assistant", msg.content))
++            elif msg.role == "system":
++                history_messages.append(("system", msg.content))
++        
++        # Save user message
++        save_message(db, session_id, "user", message, user_id=user_id)
++        
++        history_messages.append(("user", message))
++        
+         graph = get_app()
+         result = graph.invoke({
+-            "messages": [("user", message)],
++            "messages": history_messages,
+             "user_id": user_id,
+             "extracted_args": None,
+             "tool_results": [],
+@@ -222,10 +267,14 @@ def run_agent(message: str, user_id: int = 1, thread_id: Optional[str] = None) -
+             else:
+                 response_text = "I'll help you with that."
+         
++        # Save agent response
++        save_message(db, session_id, "assistant", response_text, user_id=user_id)
++        
+         return {
+             "success": True,
+             "response": response_text,
+             "user_id": user_id,
++            "thread_id": session_id,
+         }
+     except Exception as e:
+         return {
+@@ -233,7 +282,10 @@ def run_agent(message: str, user_id: int = 1, thread_id: Optional[str] = None) -
+             "error": str(e),
+             "response": "I'm here to help! What would you like to do?",
+             "user_id": user_id,
++            "thread_id": session_id,
+         }
++    finally:
++        db.close()
+ 
+ 
+ client = openai_client
+END_FILE
+FILE: backend/agents/graph/tools.py
+diff --git a/backend/agents/graph/tools.py b/backend/agents/graph/tools.py
+index 221b86c..c2fd5b5 100644
+--- a/backend/agents/graph/tools.py
++++ b/backend/agents/graph/tools.py
+@@ -131,6 +131,15 @@ class ListActivitiesInput(BaseModel):
+ class GetDashboardInput(BaseModel):
+     user_id: int = Field(default=1, description="The user ID for the dashboard")
+ 
++class SaveChatMessageInput(BaseModel):
++    session_id: str = Field(description="The unique session ID for the chat")
++    role: str = Field(description="Role of the message sender: 'user', 'assistant', 'system', or 'tool'")
++    content: str = Field(description="Content of the message")
++    contact_id: Optional[int] = Field(default=None, description="Optional contact ID associated with the message")
++
++class GetChatHistoryInput(BaseModel):
++    session_id: str = Field(description="The unique session ID for the chat")
++    limit: Optional[int] = Field(default=50, description="Maximum number of messages to retrieve")
+ 
+ # ============ Tool Implementations ============
+ 
+@@ -655,6 +664,56 @@ def get_dashboard(user_id: int = 1) -> str:
+         return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+ 
+ 
++@tool("save_chat_message", args_schema=SaveChatMessageInput)
++def save_chat_message(session_id: str, role: str, content: str, contact_id: Optional[int] = None) -> str:
++    """Save a chat message to memory. Do NOT use this for normal replies, as normal conversation is automatically saved. Use only for explicit manual logging."""
++    from agents.memory import save_message
++    try:
++        actual_user_id = UserContext.get_user_id() or 1
++        db: Session = get_db_session()
++        try:
++            msg = save_message(
++                db=db,
++                session_id=session_id,
++                role=role,
++                content=content,
++                user_id=actual_user_id,
++                contact_id=contact_id
++            )
++            return json.dumps({
++                "success": True,
++                "message_id": msg.id,
++                "message": "Chat message saved successfully"
++            })
++        finally:
++            db.close()
++    except Exception as e:
++        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
++
++
++@tool("get_chat_history", args_schema=GetChatHistoryInput)
++def get_chat_history(session_id: str, limit: int = 50) -> str:
++    """Get the recent chat history for a given session."""
++    from agents.memory import get_history
++    try:
++        actual_user_id = UserContext.get_user_id() or 1
++        db: Session = get_db_session()
++        try:
++            messages = get_history(db, session_id, limit=limit, user_id=actual_user_id)
++            return json.dumps({
++                "success": True,
++                "messages": [{
++                    "role": m.role,
++                    "content": m.content,
++                    "created_at": m.created_at.isoformat()
++                } for m in messages]
++            })
++        finally:
++            db.close()
++    except Exception as e:
++        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
++
++
+ # ============ Export All Tools ============
+ 
+ CRM_TOOLS = [
+@@ -673,4 +732,6 @@ CRM_TOOLS = [
+     create_activity,
+     list_activities,
+     get_dashboard,
++    save_chat_message,
++    get_chat_history,
+ ]
+\ No newline at end of file
+END_FILE
+FILE: backend/agents/memory.py
+diff --git a/backend/agents/memory.py b/backend/agents/memory.py
+new file mode 100644
+index 0000000..b7b1b14
+--- /dev/null
++++ b/backend/agents/memory.py
+@@ -0,0 +1,109 @@
++import json
++import logging
++from sqlalchemy.orm import Session
++from sqlalchemy import asc, desc
++from typing import List, Optional, Dict, Any
++from models import ChatMessage
++
++logger = logging.getLogger(__name__)
++
++def save_message(
++    db: Session,
++    session_id: str,
++    role: str,
++    content: Optional[str] = None,
++    user_id: Optional[int] = None,
++    contact_id: Optional[int] = None,
++    tool_calls: Optional[List[Dict[str, Any]]] = None,
++    tool_results: Optional[List[Dict[str, Any]]] = None,
++    token_count: Optional[int] = None,
++    source: Optional[str] = None,
++    is_compacted: bool = False
++) -> ChatMessage:
++    """Save a single chat message to the database."""
++    message = ChatMessage(
++        session_id=session_id,
++        role=role,
++        content=content,
++        user_id=user_id,
++        contact_id=contact_id,
++        tool_calls_json=json.dumps(tool_calls) if tool_calls else None,
++        tool_results_json=json.dumps(tool_results) if tool_results else None,
++        token_count=token_count,
++        source=source,
++        is_compacted=is_compacted
++    )
++    db.add(message)
++    db.commit()
++    db.refresh(message)
++    
++    # Check if compaction is needed
++    try:
++        compact_messages(db, session_id)
++    except Exception as e:
++        logger.error(f"Error compacting messages: {e}")
++        
++    return message
++
++def get_history(db: Session, session_id: str, limit: int = 50, user_id: Optional[int] = None) -> List[ChatMessage]:
++    """Get chat history for a session."""
++    query = db.query(ChatMessage).filter(ChatMessage.session_id == session_id)
++    if user_id is not None:
++        query = query.filter(ChatMessage.user_id == user_id)
++        
++    messages = query.order_by(desc(ChatMessage.created_at)).limit(limit).all()
++    return list(reversed(messages))
++
++def compact_messages(db: Session, session_id: str) -> None:
++    """Compact chat history if it exceeds 50 messages.
++    Summarizes the first 30 messages into 1.
++    """
++    # Count total messages for the session
++    count = db.query(ChatMessage).filter(
++        ChatMessage.session_id == session_id
++    ).count()
++
++    if count > 50:
++        # Get the first 30 messages that are not already compacted
++        messages_to_compact = db.query(ChatMessage).filter(
++            ChatMessage.session_id == session_id,
++            ChatMessage.is_compacted == False
++        ).order_by(asc(ChatMessage.created_at)).limit(30).all()
++        
++        if not messages_to_compact or len(messages_to_compact) < 30:
++            return
++
++        # Prepare text for LLM
++        history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in messages_to_compact if msg.content])
++        
++        try:
++            from agents.graph.agent import get_openrouter_client
++            client = get_openrouter_client()
++            response = client.chat.completions.create(
++                model="openrouter/elephant-alpha",
++                messages=[
++                    {"role": "system", "content": "You are a helpful assistant that summarizes chat history. Provide a concise summary of the conversation so far."},
++                    {"role": "user", "content": f"Please summarize the following chat history:\n\n{history_text}"}
++                ],
++                temperature=0.3,
++                max_tokens=500
++            )
++            summary = response.choices[0].message.content
++        except Exception as e:
++            logger.error(f"LLM compaction failed: {e}")
++            summary = "Summary of previous messages:\n" + history_text[:500] + "..."
++
++        # Create the compacted message
++        compacted_msg = ChatMessage(
++            session_id=session_id,
++            role="system",
++            content=f"[COMPACTED 30 MESSAGES] {summary}",
++            is_compacted=True
++        )
++        db.add(compacted_msg)
++        
++        # Delete the old messages
++        for msg in messages_to_compact:
++            db.delete(msg)
++            
++        db.commit()
+END_FILE
+FILE: backend/main.py
+diff --git a/backend/main.py b/backend/main.py
+index ec6ee18..d21ff41 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -18,6 +18,8 @@ from routes import (
+     whatsapp,
+     privacy,
+     telegram,
++    chat_memory,
++    business_background,
+ )
+ 
+ app = FastAPI(title="UM CRM API", version="1.0.0")
+@@ -164,6 +166,8 @@ app.include_router(
+ app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["whatsapp"])
+ app.include_router(telegram.router, prefix="/api/telegram", tags=["telegram"])
+ app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
++app.include_router(chat_memory.router, prefix="/api/chat-memory", tags=["chat_memory"])
++app.include_router(business_background.router, prefix="/api/business-background", tags=["business_background"])
+ 
+ 
+ @app.get("/")
+END_FILE
+FILE: backend/models.py
+diff --git a/backend/models.py b/backend/models.py
+index 6cbd17c..0888f2b 100644
+--- a/backend/models.py
++++ b/backend/models.py
+@@ -209,3 +209,42 @@ class TelegramBot(Base):
+     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+ 
+     user = relationship("User", back_populates="telegram_bots")
++
++
++class ChatMessage(Base):
++    __tablename__ = "chat_messages"
++
++    id = Column(Integer, primary_key=True, index=True)
++    user_id = Column(Integer, ForeignKey("users.id"), index=True)
++    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=True, index=True)
++    session_id = Column(String, index=True)
++    role = Column(String, index=True)
++    content = Column(Text, nullable=True)
++    tool_calls_json = Column(Text, nullable=True)
++    tool_results_json = Column(Text, nullable=True)
++    token_count = Column(Integer, nullable=True)
++    source = Column(String, nullable=True)
++    is_compacted = Column(Boolean, default=False, index=True)
++    created_at = Column(DateTime, default=datetime.utcnow)
++
++    user = relationship("User")
++    contact = relationship("Contact")
++
++
++class BusinessBackground(Base):
++    __tablename__ = "business_backgrounds"
++
++    id = Column(Integer, primary_key=True, index=True)
++    user_id = Column(Integer, ForeignKey("users.id"), index=True)
++    category = Column(String, index=True)
++    title = Column(String)
++    content = Column(Text)
++    tags_json = Column(Text, nullable=True)
++    is_active = Column(Boolean, default=True, index=True)
++    priority = Column(Integer, default=0)
++    usage_count = Column(Integer, default=0)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    user = relationship("User")
++
+END_FILE
+FILE: backend/routes/business_background.py
+diff --git a/backend/routes/business_background.py b/backend/routes/business_background.py
+new file mode 100644
+index 0000000..0c35016
+--- /dev/null
++++ b/backend/routes/business_background.py
+@@ -0,0 +1,125 @@
++from fastapi import APIRouter, Depends, HTTPException
++from sqlalchemy.orm import Session
++from typing import List, Dict, Any, Optional
++from pydantic import BaseModel
++from database import get_db
++from models import User, BusinessBackground
++from auth import get_current_user
++from agents.business_context import save, list_backgrounds, search, get_active
++
++router = APIRouter()
++
++class BusinessBackgroundCreate(BaseModel):
++    category: str
++    title: str
++    content: str
++    tags: Optional[List[str]] = None
++    is_active: bool = True
++    priority: int = 0
++
++class BusinessBackgroundUpdate(BusinessBackgroundCreate):
++    pass
++
++@router.post("")
++def create_business_background(
++    data: BusinessBackgroundCreate,
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user)
++):
++    """Create a new business background entry."""
++    bg = save(
++        db=db,
++        user_id=current_user.id,
++        category=data.category,
++        title=data.title,
++        content=data.content,
++        tags=data.tags,
++        is_active=data.is_active,
++        priority=data.priority
++    )
++    return {"success": True, "id": bg.id}
++
++@router.get("")
++def get_business_backgrounds(
++    query: Optional[str] = None,
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user)
++):
++    """List or search business backgrounds."""
++    if query:
++        bgs = search(db, current_user.id, query)
++    else:
++        bgs = list_backgrounds(db, current_user.id)
++        
++    return [
++        {
++            "id": bg.id,
++            "category": bg.category,
++            "title": bg.title,
++            "content": bg.content,
++            "tags": bg.tags_json,
++            "is_active": bg.is_active,
++            "priority": bg.priority,
++            "usage_count": bg.usage_count,
++            "created_at": bg.created_at.isoformat()
++        }
++        for bg in bgs
++    ]
++
++@router.get("/active")
++def get_active_backgrounds(
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user)
++):
++    """Get active business backgrounds for context."""
++    bgs = get_active(db, current_user.id)
++    return [
++        {
++            "id": bg.id,
++            "category": bg.category,
++            "title": bg.title,
++            "content": bg.content,
++            "priority": bg.priority
++        }
++        for bg in bgs
++    ]
++
++@router.put("/{bg_id}")
++def update_business_background(
++    bg_id: int,
++    data: BusinessBackgroundUpdate,
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user)
++):
++    """Update a business background entry."""
++    bg = save(
++        db=db,
++        user_id=current_user.id,
++        category=data.category,
++        title=data.title,
++        content=data.content,
++        tags=data.tags,
++        is_active=data.is_active,
++        priority=data.priority,
++        background_id=bg_id
++    )
++    if not bg:
++        raise HTTPException(status_code=404, detail="Background not found")
++    return {"success": True}
++
++@router.delete("/{bg_id}")
++def delete_business_background(
++    bg_id: int,
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user)
++):
++    """Delete a business background entry."""
++    bg = db.query(BusinessBackground).filter(
++        BusinessBackground.id == bg_id,
++        BusinessBackground.user_id == current_user.id
++    ).first()
++    if not bg:
++        raise HTTPException(status_code=404, detail="Background not found")
++    db.delete(bg)
++    db.commit()
++    return {"success": True}
+END_FILE
+FILE: backend/routes/chat_memory.py
+diff --git a/backend/routes/chat_memory.py b/backend/routes/chat_memory.py
+new file mode 100644
+index 0000000..0491cda
+--- /dev/null
++++ b/backend/routes/chat_memory.py
+@@ -0,0 +1,30 @@
++from fastapi import APIRouter, Depends, HTTPException
++from sqlalchemy.orm import Session
++from typing import List, Dict, Any
++from database import get_db
++from models import User
++from auth import get_current_user
++from agents.memory import get_history
++
++router = APIRouter()
++
++@router.get("/{session_id}")
++def get_session_history(
++    session_id: str,
++    limit: int = 50,
++    db: Session = Depends(get_db),
++    current_user: User = Depends(get_current_user)
++):
++    """Get chat history for a session."""
++    messages = get_history(db, session_id, limit=limit, user_id=current_user.id)
++    return [
++        {
++            "id": m.id,
++            "session_id": m.session_id,
++            "role": m.role,
++            "content": m.content,
++            "is_compacted": m.is_compacted,
++            "created_at": m.created_at.isoformat()
++        }
++        for m in messages
++    ]
+END_FILE
+FILE: backend/routes/chatery.py
+diff --git a/backend/routes/chatery.py b/backend/routes/chatery.py
+index 15e7869..0934902 100644
+--- a/backend/routes/chatery.py
++++ b/backend/routes/chatery.py
+@@ -139,13 +139,22 @@ def process_chatery_message_and_reply(
+ 
+         from agents.cs_agent import process_whatsapp_message
+ 
+-        result = process_whatsapp_message(agent_payload)
++        def send_immediate_reply(msg_text: str):
++            logger.info(f"Sending automated immediate reply to {resolved_phone} for session {session_id}")
++            send_chatery_text_message(
++                session_id=session_id,
++                chat_id=resolved_phone,
++                message=msg_text,
++                typing_time=1500,
++            )
++
++        result = process_whatsapp_message(agent_payload, send_callback=send_immediate_reply)
+         response_text = result.get("response", "")
+ 
+         if not response_text:
+             return
+ 
+-        logger.info(f"Sending automated reply to {resolved_phone} for session {session_id}")
++        logger.info(f"Sending automated final reply to {resolved_phone} for session {session_id}")
+         send_result = send_chatery_text_message(
+             session_id=session_id,
+             chat_id=resolved_phone,
+END_FILE
+FILE: backend/routes/telegram.py
+diff --git a/backend/routes/telegram.py b/backend/routes/telegram.py
+index 2849292..82f63d3 100644
+--- a/backend/routes/telegram.py
++++ b/backend/routes/telegram.py
+@@ -53,7 +53,14 @@ def process_telegram_update_and_reply(
+             "message": text,
+         }
+ 
+-        result = process_telegram_message(message_data)
++        def send_immediate_reply(msg_text: str):
++            send_telegram_message(
++                bot_token=bot_token,
++                chat_id=chat_id,
++                message=msg_text,
++            )
++
++        result = process_telegram_message(message_data, send_callback=send_immediate_reply)
+         response_text = result.get("response", "")
+ 
+         if not response_text:
+END_FILE
+FILE: backend/routes/whatsapp.py
+diff --git a/backend/routes/whatsapp.py b/backend/routes/whatsapp.py
+index 032d712..7807b72 100644
+--- a/backend/routes/whatsapp.py
++++ b/backend/routes/whatsapp.py
+@@ -195,7 +195,15 @@ def process_whatsapp_update_and_reply(
+             "message": message_text,
+         }
+ 
+-        result = process_whatsapp_message(message_data)
++        def send_immediate_reply(text: str):
++            send_whatsapp_message(
++                phone_number_id=phone_number_id,
++                access_token=access_token,
++                recipient=recipient,
++                message=text,
++            )
++
++        result = process_whatsapp_message(message_data, send_callback=send_immediate_reply)
+         response_text = result.get("response", "")
+ 
+         if not response_text:
+END_FILE
+FILE: frontend/app/business/page.tsx
+diff --git a/frontend/app/business/page.tsx b/frontend/app/business/page.tsx
+new file mode 100644
+index 0000000..fc1ba8f
+--- /dev/null
++++ b/frontend/app/business/page.tsx
+@@ -0,0 +1,477 @@
++'use client';
++import { useEffect, useState } from 'react';
++import { useRouter } from 'next/navigation';
++import Sidebar from '@/components/Sidebar';
++import { businessBackground as businessApi } from '@/lib/api';
++import { Plus, Search, Trash2, Edit2, Save, X, Eye, Calendar, User, ToggleRight, ToggleLeft } from 'lucide-react';
++
++type BusinessRow = {
++  id: number;
++  category: string;
++  title: string;
++  content: string;
++  is_active: boolean;
++  priority: number;
++  tags?: string;
++  usage_count?: number;
++  created_at?: string;
++};
++
++export default function BusinessBackgroundPage() {
++  const router = useRouter();
++  const [backgroundsList, setBackgroundsList] = useState<BusinessRow[]>([]);
++  const [search, setSearch] = useState('');
++  const [loading, setLoading] = useState(true);
++  
++  const [activeBgId, setActiveBgId] = useState<number | null>(null);
++  const [isEditing, setIsEditing] = useState(false);
++  const [formData, setFormData] = useState({ 
++    category: 'technology', 
++    title: '', 
++    content: '', 
++    is_active: true, 
++    priority: 1,
++    tags: [] as string[]
++  });
++  const [tagInput, setTagInput] = useState('');
++
++  useEffect(() => {
++    const token = localStorage.getItem('token');
++    if (!token) {
++      router.push('/');
++      return;
++    }
++    loadBackgrounds();
++  }, [router, search]);
++
++  const loadBackgrounds = async () => {
++    try {
++      const res = await businessApi.list(search || undefined);
++      setBackgroundsList(res.data);
++      if (res.data.length > 0 && activeBgId === null && !isEditing) {
++        selectBackground(res.data[0]);
++      }
++    } catch (err) {
++      console.error(err);
++    } finally {
++      setLoading(false);
++    }
++  };
++
++  const selectBackground = (bg: BusinessRow) => {
++    setActiveBgId(bg.id);
++    setIsEditing(false);
++    let parsedTags = [];
++    try {
++      parsedTags = bg.tags ? JSON.parse(bg.tags) : [];
++    } catch(e) {}
++    
++    setFormData({
++      category: bg.category || 'technology',
++      title: bg.title || '',
++      content: bg.content || '',
++      is_active: bg.is_active,
++      priority: bg.priority || 1,
++      tags: parsedTags
++    });
++  };
++
++  const handleAddNew = () => {
++    setActiveBgId(null);
++    setIsEditing(true);
++    setFormData({ 
++      category: 'technology', 
++      title: '', 
++      content: '', 
++      is_active: true, 
++      priority: 1,
++      tags: []
++    });
++  };
++
++  const handleSave = async () => {
++    if (!formData.title.trim() || !formData.content.trim()) {
++      alert('Official Title and Content Narrative are required fields.');
++      return;
++    }
++
++    try {
++      const payload = {
++        ...formData,
++        tags: formData.tags
++      };
++      
++      if (activeBgId === null) {
++        const res = await businessApi.create(payload);
++        setActiveBgId(res.data.id);
++      } else {
++        await businessApi.update(activeBgId, payload);
++      }
++      setIsEditing(false);
++      loadBackgrounds();
++    } catch (err) {
++      console.error(err);
++    }
++  };
++
++  const handleCancel = () => {
++    if (activeBgId === null && backgroundsList.length > 0) {
++      selectBackground(backgroundsList[0]);
++    } else if (activeBgId !== null) {
++      const current = backgroundsList.find(b => b.id === activeBgId);
++      if (current) selectBackground(current);
++    } else {
++      setIsEditing(false);
++      // BUG FIX: Reset form data so ghost input doesn't linger when there are no items
++      setFormData({ 
++        category: 'technology', 
++        title: '', 
++        content: '', 
++        is_active: true, 
++        priority: 1,
++        tags: []
++      });
++    }
++  };
++
++  const handleDelete = async (id: number) => {
++    if (!confirm('Are you sure you want to delete this?')) return;
++    try {
++      await businessApi.delete(id);
++      if (activeBgId === id) {
++        setActiveBgId(null);
++        // BUG FIX: Clear out formData immediately to prevent ghost data display
++        setFormData({ 
++          category: 'technology', 
++          title: '', 
++          content: '', 
++          is_active: true, 
++          priority: 1,
++          tags: []
++        });
++      }
++      loadBackgrounds();
++    } catch (err) {
++      console.error(err);
++    }
++  };
++
++  const addTag = (e: React.KeyboardEvent) => {
++    if (e.key === 'Enter' && tagInput.trim()) {
++      e.preventDefault();
++      if (!formData.tags.includes(tagInput.trim())) {
++        setFormData({ ...formData, tags: [...formData.tags, tagInput.trim()] });
++      }
++      setTagInput('');
++    }
++  };
++
++  const removeTag = (tagToRemove: string) => {
++    setFormData({
++      ...formData,
++      tags: formData.tags.filter(tag => tag !== tagToRemove)
++    });
++  };
++
++  const getActiveRecord = () => {
++    return backgroundsList.find(b => b.id === activeBgId);
++  };
++
++  const activeRecord = getActiveRecord();
++
++  if (loading) {
++    return (
++      <div className="flex">
++        <Sidebar />
++        <div className="flex-1 flex items-center justify-center">
++          <div className="text-muted">Loading...</div>
++        </div>
++      </div>
++    );
++  }
++
++  return (
++    <div className="flex flex-col md:flex-row min-h-screen bg-[#F8FAFC]">
++      <Sidebar />
++      <div className="flex-1">
++        {/* Top Header Bar */}
++        <div className="h-16 border-b border-gray-200 bg-white flex items-center px-6 gap-4">
++          <div className="relative w-full max-w-xl flex items-center bg-[#F1F5F9] rounded-lg px-3 py-2">
++            <Search className="text-gray-400" size={18} />
++            <input
++              type="text"
++              placeholder="Search businesses..."
++              value={search}
++              onChange={(e) => setSearch(e.target.value)}
++              className="bg-transparent border-none outline-none w-full ml-2 text-sm text-gray-700 placeholder-gray-400"
++            />
++          </div>
++          <div className="flex-1 font-semibold text-center text-ink">Business Background</div>
++          <div className="flex items-center gap-4 text-gray-500">
++            {/* Placeholder icons */}
++            <div className="w-5 h-5 rounded-full bg-gray-200"></div>
++            <div className="w-5 h-5 rounded-full bg-gray-200"></div>
++            <div className="w-8 h-8 rounded-full bg-blue-600 border-2 border-white shadow-sm"></div>
++          </div>
++        </div>
++
++        <div className="p-6 lg:p-8 flex flex-col xl:flex-row gap-6">
++          {/* Main Content Area */}
++          <div className="flex-1 max-w-4xl">
++            <div className="flex items-center justify-between mb-6">
++              <div>
++                <h1 className="text-2xl font-bold text-gray-900">Business Detail Form</h1>
++                <p className="text-gray-500 text-sm mt-1">Manage and update background information for this entity.</p>
++              </div>
++              
++              {isEditing ? (
++                <div className="flex gap-3">
++                  <button onClick={handleCancel} className="px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors">
++                    Cancel
++                  </button>
++                  <button onClick={handleSave} className="px-4 py-2 rounded-lg bg-[#0F62FE] text-white text-sm font-semibold flex items-center gap-2 hover:bg-blue-700 transition-colors">
++                    <Save size={16} />
++                    Save Changes
++                  </button>
++                </div>
++              ) : (
++                <div className="flex gap-3">
++                  <button onClick={handleAddNew} className="px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors flex items-center gap-2">
++                    <Plus size={16} />
++                    Add New
++                  </button>
++                  <button onClick={() => setIsEditing(true)} className="px-4 py-2 rounded-lg bg-[#0F62FE] text-white text-sm font-semibold flex items-center gap-2 hover:bg-blue-700 transition-colors" disabled={activeBgId === null}>
++                    <Edit2 size={16} />
++                    Edit Form
++                  </button>
++                </div>
++              )}
++            </div>
++
++            <div className="space-y-6">
++              {/* Identification Section */}
++              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
++                <div className="flex justify-between items-center mb-6">
++                  <h2 className="text-xl font-semibold text-gray-900">Identification</h2>
++                  <Edit2 size={16} className="text-gray-400" />
++                </div>
++                
++                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
++                  <div>
++                    <label className="block text-xs font-semibold tracking-wider text-gray-500 uppercase mb-2">Category</label>
++                    {isEditing ? (
++                      <select
++                        value={formData.category}
++                        onChange={(e) => setFormData({ ...formData, category: e.target.value })}
++                        className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
++                      >
++                        <option value="technology">Technology</option>
++                        <option value="finance">Finance</option>
++                        <option value="healthcare">Healthcare</option>
++                        <option value="retail">Retail</option>
++                        <option value="other">Other</option>
++                      </select>
++                    ) : (
++                      <div className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-gray-800 text-sm bg-gray-50 capitalize">
++                        {formData.category || '-'}
++                      </div>
++                    )}
++                  </div>
++                  <div>
++                    <label className="block text-xs font-semibold tracking-wider text-gray-500 uppercase mb-2">Official Title</label>
++                    {isEditing ? (
++                      <input
++                        type="text"
++                        value={formData.title}
++                        onChange={(e) => setFormData({ ...formData, title: e.target.value })}
++                        className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
++                        placeholder="e.g. Acme Corp International"
++                      />
++                    ) : (
++                      <div className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-gray-800 text-sm bg-gray-50">
++                        {formData.title || '-'}
++                      </div>
++                    )}
++                  </div>
++                </div>
++              </div>
++
++              {/* Detailed Background Section */}
++              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
++                <div className="flex justify-between items-center mb-6">
++                  <h2 className="text-xl font-semibold text-gray-900">Detailed Background</h2>
++                  <Edit2 size={16} className="text-gray-400" />
++                </div>
++                
++                <div>
++                  <label className="block text-xs font-semibold tracking-wider text-gray-500 uppercase mb-2">Content Narrative</label>
++                  {isEditing ? (
++                    <textarea
++                      value={formData.content}
++                      onChange={(e) => setFormData({ ...formData, content: e.target.value })}
++                      className="w-full border border-gray-200 rounded-lg px-4 py-3 text-gray-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[200px]"
++                      placeholder="Enter the detailed background here..."
++                    />
++                  ) : (
++                    <div className="w-full border border-gray-200 rounded-lg px-4 py-3 text-gray-800 text-sm bg-gray-50 min-h-[200px] whitespace-pre-wrap">
++                      {formData.content || '-'}
++                    </div>
++                  )}
++                  <div className="flex justify-between mt-2">
++                    <span className="text-xs text-gray-400">Markdown supported</span>
++                    <span className="text-xs text-gray-400">{formData.content.length} characters</span>
++                  </div>
++                </div>
++              </div>
++            </div>
++          </div>
++
++          {/* Right Sidebar Area */}
++          <div className="w-full xl:w-80 flex flex-col gap-6">
++            
++            {/* Configuration Section */}
++            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
++              <div className="flex justify-between items-center mb-6">
++                <h2 className="text-xl font-semibold text-gray-900">Configuration</h2>
++                <Edit2 size={16} className="text-gray-400" />
++              </div>
++
++              <div className="mb-6">
++                <label className="block text-xs font-semibold tracking-wider text-gray-500 uppercase mb-3">Classification Tags</label>
++                <div className="flex flex-wrap gap-2 mb-2">
++                  {formData.tags.map(tag => (
++                    <span key={tag} className="inline-flex items-center gap-1 px-3 py-1 bg-[#EEF2FF] text-[#4F46E5] rounded-full text-xs font-semibold">
++                      {tag}
++                      {isEditing && (
++                        <button onClick={() => removeTag(tag)} className="hover:text-blue-800 focus:outline-none">
++                          <X size={12} />
++                        </button>
++                      )}
++                    </span>
++                  ))}
++                  {isEditing && (
++                    <input
++                      type="text"
++                      value={tagInput}
++                      onChange={e => setTagInput(e.target.value)}
++                      onKeyDown={addTag}
++                      placeholder="+ Add Tag"
++                      className="inline-flex items-center px-3 py-1 border border-dashed border-gray-300 rounded-full text-xs text-gray-600 focus:outline-none focus:border-blue-500 bg-transparent w-24"
++                    />
++                  )}
++                </div>
++              </div>
++
++              <div className="mb-6">
++                <label className="block text-xs font-semibold tracking-wider text-gray-500 uppercase mb-3">Routing Priority</label>
++                <div className="flex items-center gap-3">
++                  {isEditing ? (
++                    <input 
++                      type="number" 
++                      value={formData.priority}
++                      onChange={(e) => setFormData({ ...formData, priority: parseInt(e.target.value) || 1 })}
++                      className="w-16 border border-gray-200 rounded-lg px-3 py-2 text-center text-sm"
++                      min="1"
++                      max="10"
++                    />
++                  ) : (
++                    <div className="w-16 border border-gray-200 rounded-lg px-3 py-2 text-center text-sm bg-gray-50">
++                      {formData.priority}
++                    </div>
++                  )}
++                  <span className="text-sm text-gray-600">Level {formData.priority} {formData.priority === 1 ? '(Highest)' : ''}</span>
++                </div>
++              </div>
++
++              <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
++                <div>
++                  <div className="text-sm font-semibold text-gray-900">Entity Status</div>
++                  <div className="text-xs text-gray-500 mt-0.5">Currently {formData.is_active ? 'visible in production' : 'hidden'}</div>
++                </div>
++                <button 
++                  onClick={() => isEditing && setFormData({...formData, is_active: !formData.is_active})}
++                  disabled={!isEditing}
++                  className={`focus:outline-none ${!isEditing ? 'cursor-default opacity-80' : ''}`}
++                >
++                  {formData.is_active ? (
++                    <ToggleRight size={36} className="text-[#0F62FE]" />
++                  ) : (
++                    <ToggleLeft size={36} className="text-gray-300" />
++                  )}
++                </button>
++              </div>
++            </div>
++
++            {/* Metrics & History Section */}
++            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
++              <h2 className="text-xl font-semibold text-gray-900 mb-6">Metrics & History</h2>
++              
++              <div className="bg-[#F8FAFC] border border-gray-100 rounded-xl p-4 flex items-center justify-between mb-6">
++                <div className="flex items-center gap-3">
++                  <div className="w-10 h-10 rounded-lg bg-[#E0E7FF] flex items-center justify-center text-[#4F46E5]">
++                    <Eye size={20} />
++                  </div>
++                  <span className="text-sm text-gray-600">Usage Count</span>
++                </div>
++                <span className="text-lg font-bold text-gray-900">
++                  {(activeRecord?.usage_count || 0).toLocaleString()}
++                </span>
++              </div>
++
++              <div className="space-y-4 text-sm">
++                <div className="flex justify-between items-center">
++                  <div className="flex items-center gap-2 text-gray-500">
++                    <Calendar size={14} />
++                    <span>Created</span>
++                  </div>
++                  <span className="text-gray-900 font-medium">
++                    {activeRecord?.created_at ? new Date(activeRecord.created_at).toLocaleDateString() : '-'}
++                  </span>
++                </div>
++                <div className="flex justify-between items-center">
++                  <div className="flex items-center gap-2 text-gray-500">
++                    <Calendar size={14} />
++                    <span>Last Updated</span>
++                  </div>
++                  <span className="text-gray-900 font-medium">
++                    {activeRecord?.created_at ? new Date(activeRecord.created_at).toLocaleDateString() : '-'}
++                  </span>
++                </div>
++                <div className="flex justify-between items-center pt-2">
++                  <div className="flex items-center gap-2 text-gray-500">
++                    <User size={14} />
++                    <span>Modified By</span>
++                  </div>
++                  <span className="text-blue-600 font-medium truncate max-w-[120px]">
++                    System User
++                  </span>
++                </div>
++              </div>
++            </div>
++            
++            {/* List Selection Sidebar (replaces the table) */}
++            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
++              <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3">Other Records</h3>
++              <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
++                {backgroundsList.map(bg => (
++                  <button 
++                    key={bg.id}
++                    onClick={() => selectBackground(bg)}
++                    className={`w-full text-left p-3 rounded-lg border text-sm transition-colors ${activeBgId === bg.id ? 'border-blue-500 bg-blue-50' : 'border-gray-100 hover:border-gray-300'}`}
++                  >
++                    <div className="font-semibold text-gray-900 truncate">{bg.title || 'Untitled'}</div>
++                    <div className="text-xs text-gray-500 mt-1 capitalize">{bg.category}</div>
++                  </button>
++                ))}
++                {backgroundsList.length === 0 && (
++                  <div className="text-sm text-gray-500 text-center py-4">No records found.</div>
++                )}
++              </div>
++            </div>
++
++          </div>
++        </div>
++      </div>
++    </div>
++  );
++}
+\ No newline at end of file
+END_FILE
+FILE: frontend/app/dashboard/page.tsx
+diff --git a/frontend/app/dashboard/page.tsx b/frontend/app/dashboard/page.tsx
+index 05f5de7..edbd2a1 100644
+--- a/frontend/app/dashboard/page.tsx
++++ b/frontend/app/dashboard/page.tsx
+@@ -2,9 +2,10 @@
+ import { useEffect, useMemo, useState } from 'react';
+ import { useRouter } from 'next/navigation';
+ import Sidebar from '@/components/Sidebar';
+-import { reports, tasks as tasksApi, opportunities as opportunitiesApi } from '@/lib/api';
++import { reports, tasks as tasksApi, opportunities as opportunitiesApi, businessBackground as businessApi } from '@/lib/api';
+ import { getCache, setCache, preloadUserData, getPreloadedData } from '@/lib/cache';
+-import { Users, CheckSquare, DollarSign, TrendingUp, Clock, Sparkles, Target } from 'lucide-react';
++import { Users, CheckSquare, DollarSign, TrendingUp, Clock, Sparkles, Target, AlertTriangle } from 'lucide-react';
++import Link from 'next/link';
+ 
+ export default function DashboardPage() {
+   const router = useRouter();
+@@ -12,6 +13,7 @@ export default function DashboardPage() {
+   const [pipeline, setPipeline] = useState<any[]>([]);
+   const [tasks, setTasks] = useState<any[]>([]);
+   const [opportunities, setOpportunities] = useState<any[]>([]);
++  const [hasBusinessBackground, setHasBusinessBackground] = useState<boolean>(true);
+   const [loading, setLoading] = useState(true);
+   const [isRefreshing, setIsRefreshing] = useState(false);
+ 
+@@ -43,17 +45,19 @@ export default function DashboardPage() {
+   const loadDashboard = async () => {
+     try {
+       setIsRefreshing(true);
+-      const [metricsRes, pipelineRes, tasksRes, oppsRes] = await Promise.all([
++      const [metricsRes, pipelineRes, tasksRes, oppsRes, bgRes] = await Promise.all([
+         reports.dashboard(),
+         reports.pipeline(),
+         tasksApi.list(),
+         opportunitiesApi.list(),
++        businessApi.list()
+       ]);
+       
+       setMetrics(metricsRes.data);
+       setPipeline(pipelineRes.data);
+       setTasks(tasksRes.data);
+       setOpportunities(oppsRes.data);
++      setHasBusinessBackground(bgRes.data && bgRes.data.length > 0);
+       
+       setCache('metrics', metricsRes.data);
+       setCache('pipeline', pipelineRes.data);
+@@ -171,6 +175,21 @@ export default function DashboardPage() {
+           </p>
+         </div>
+ 
++        {!hasBusinessBackground && (
++          <div className="mb-8 rounded-2xl bg-amber-50 border border-amber-200 p-4 flex items-start gap-3 animate-fade-up">
++            <AlertTriangle className="text-amber-500 mt-0.5 shrink-0" size={20} />
++            <div>
++              <h3 className="font-semibold text-amber-800">Setup your Business Context</h3>
++              <p className="text-amber-700 text-sm mt-1">
++                Your AI agent works best when it knows about your business. Add some company background, products, or FAQs.
++              </p>
++              <Link href="/business" className="inline-block mt-3 text-sm font-semibold text-amber-800 hover:text-amber-900 underline underline-offset-2">
++                Add Business Background →
++              </Link>
++            </div>
++          </div>
++        )}
++
+         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+           {statCards.map((stat, i) => {
+             const Icon = stat.icon;
+END_FILE
+FILE: frontend/components/Sidebar.tsx
+diff --git a/frontend/components/Sidebar.tsx b/frontend/components/Sidebar.tsx
+index f8942c4..129871a 100644
+--- a/frontend/components/Sidebar.tsx
++++ b/frontend/components/Sidebar.tsx
+@@ -12,7 +12,8 @@ import {
+   Bot,
+   Settings,
+   LogOut,
+-  Mail
++  Mail,
++  BookOpen
+ } from 'lucide-react';
+ import { useRouter } from 'next/navigation';
+ 
+@@ -24,6 +25,7 @@ const navItems = [
+   { href: '/calendar', label: 'Calendar', icon: Calendar },
+   { href: '/emails', label: 'Emails', icon: Mail },
+   { href: '/reports', label: 'Reports', icon: BarChart3 },
++  { href: '/business', label: 'Business Background', icon: BookOpen },
+ ];
+ 
+ export default function Sidebar() {
+END_FILE
+FILE: frontend/lib/api.ts
+diff --git a/frontend/lib/api.ts b/frontend/lib/api.ts
+index b642476..fb6f0b3 100644
+--- a/frontend/lib/api.ts
++++ b/frontend/lib/api.ts
+@@ -161,3 +161,16 @@ export const chatery = {
+   status: (userId: number) => api.get(`/chatery/status/${userId}`),
+   qr: (userId: number) => api.get(`/chatery/qr/${userId}`),
+ };
++
++export const chatMemory = {
++  getHistory: (sessionId: string, limit?: number) => 
++    api.get(`/chat-memory/${sessionId}`, { params: { limit } }),
++};
++
++export const businessBackground = {
++  list: (query?: string) => api.get('/business-background', { params: { query } }),
++  getActive: () => api.get('/business-background/active'),
++  create: (data: any) => api.post('/business-background', data),
++  update: (id: number, data: any) => api.put(`/business-background/${id}`, data),
++  delete: (id: number) => api.delete(`/business-background/${id}`),
++};
+END_FILE
+FILE: frontend/next.config.js
+diff --git a/frontend/next.config.js b/frontend/next.config.js
+index 48d5851..1250767 100644
+--- a/frontend/next.config.js
++++ b/frontend/next.config.js
+@@ -35,7 +35,7 @@ const nextConfig = {
+     return [
+       {
+         source: '/api/:path*',
+-        destination: 'http://localhost:8000/api/:path*',
++        destination: process.env.BACKEND_URL ? `${process.env.BACKEND_URL}/api/:path*` : 'http://localhost:8000/api/:path*',
+       },
+     ];
+   },
+END_FILE
+FILE: frontend/public/sw.js
+diff --git a/frontend/public/sw.js b/frontend/public/sw.js
+index 9d77f28..5a224a5 100644
+--- a/frontend/public/sw.js
++++ b/frontend/public/sw.js
+@@ -1 +1 @@
+-if(!self.define){let e,s={};const t=(t,c)=>(t=new URL(t+".js",c).href,s[t]||new Promise(s=>{if("document"in self){const e=document.createElement("script");e.src=t,e.onload=s,document.head.appendChild(e)}else e=t,importScripts(t),s()}).then(()=>{let e=s[t];if(!e)throw new Error(`Module ${t} didn’t register its module`);return e}));self.define=(c,n)=>{const a=e||("document"in self?document.currentScript.src:"")||location.href;if(s[a])return;let i={};const r=e=>t(e,a),o={module:{uri:a},exports:i,require:r};s[a]=Promise.all(c.map(e=>o[e]||r(e))).then(e=>(n(...e),i))}}define(["./workbox-e7b4d9bd"],function(e){"use strict";importScripts(),self.skipWaiting(),e.clientsClaim(),e.precacheAndRoute([{url:"/_next/app-build-manifest.json",revision:"dc6f4b185ca608bae8a5db802354cbdf"},{url:"/_next/static/chunks/242-d76b16e16038d274.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/32-db4817ab10d5ad07.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/564-35cffc630a1c9676.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/615-cd86579f8cea6630.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/631-fd3ca05ae9d6027a.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/69-93cddc9a5bf7a982.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/_not-found-49cbef3cc99cb200.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/api/auth/callback/calendar/page-189bae0ca94d4b81.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/api/auth/callback/google/page-f90c2361d1532f54.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/calendar/page-0a8a7fd76c6c0e49.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/contacts/%5Bid%5D/page-439d3959c5dbd0d6.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/contacts/page-c58cfa99abb04a12.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/dashboard/page-a91eda6ebb4324b5.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/emails/page-1511ca718dd8b045.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/layout-1b293bcec4ad7f45.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/oauth2/callback/page-9c859ca112d132c3.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/opportunities/%5Bid%5D/page-30ec2b863ff2a19a.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/opportunities/page-ef935b0f5d78c072.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/page-8b145ad3bb82f642.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/register/page-1f37511ae9e19fb1.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/reports/page-33cc1f2616f00ff8.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/settings/page-6184ea0532589a6f.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/tasks/%5Bid%5D/page-5f3f568e78c4deb0.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/app/tasks/page-5a982bfde4ff8bd5.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/fd9d1056-22a8115f3ca18d53.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/framework-f66176bb897dc684.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/main-1b32342aa831900c.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/main-app-c66f4735b97fea21.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/pages/_app-75f6107b0260711c.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/pages/_error-9a890acb1e81c3fc.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/chunks/polyfills-c67a75d1b6f99dc8.js",revision:"837c0df77fd5009c9e46d446188ecfd0"},{url:"/_next/static/chunks/webpack-13cadbb85c0a8edb.js",revision:"ncFbGSt7SLVmLvM1e7NN-"},{url:"/_next/static/css/4976356af113796f.css",revision:"4976356af113796f"},{url:"/_next/static/ncFbGSt7SLVmLvM1e7NN-/_buildManifest.js",revision:"c5f17930a62cbeeb1aeb4f70619dcb61"},{url:"/_next/static/ncFbGSt7SLVmLvM1e7NN-/_ssgManifest.js",revision:"b6652df95db52feb4daf4eca35380933"},{url:"/icons/icon-192.png",revision:"3687f8e858902007c52fa42b562766c0"},{url:"/icons/icon-512.png",revision:"f8019cedc7d6706e7573d4d7a62cdad9"},{url:"/manifest.webmanifest",revision:"b483e86981949255c5dc9fd9e3f231ee"}],{ignoreURLParametersMatching:[]}),e.cleanupOutdatedCaches(),e.registerRoute("/",new e.NetworkFirst({cacheName:"start-url",plugins:[{cacheWillUpdate:async({request:e,response:s,event:t,state:c})=>s&&"opaqueredirect"===s.type?new Response(s.body,{status:200,statusText:"OK",headers:s.headers}):s}]}),"GET"),e.registerRoute(({url:e})=>e.pathname.startsWith("/api/"),new e.NetworkOnly({cacheName:"api-network-only",plugins:[]}),"GET"),e.registerRoute(/^https:\/\/fonts\.googleapis\.com\/.*/i,new e.CacheFirst({cacheName:"google-fonts-stylesheets",plugins:[]}),"GET"),e.registerRoute(/^https:\/\/fonts\.gstatic\.com\/.*/i,new e.CacheFirst({cacheName:"google-fonts-webfonts",plugins:[]}),"GET")});
++if(!self.define){let e,s={};const t=(t,n)=>(t=new URL(t+".js",n).href,s[t]||new Promise(s=>{if("document"in self){const e=document.createElement("script");e.src=t,e.onload=s,document.head.appendChild(e)}else e=t,importScripts(t),s()}).then(()=>{let e=s[t];if(!e)throw new Error(`Module ${t} didn’t register its module`);return e}));self.define=(n,r)=>{const c=e||("document"in self?document.currentScript.src:"")||location.href;if(s[c])return;let i={};const a=e=>t(e,c),o={module:{uri:c},exports:i,require:a};s[c]=Promise.all(n.map(e=>o[e]||a(e))).then(e=>(r(...e),i))}}define(["./workbox-e7b4d9bd"],function(e){"use strict";importScripts(),self.skipWaiting(),e.clientsClaim(),e.precacheAndRoute([{url:"/_next/app-build-manifest.json",revision:"08ebb2eeab841adacd5863f444619385"},{url:"/_next/static/chunks/122-1f7fb7cb5880bab3.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/32-db4817ab10d5ad07.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/460-f9e28e421c8b17bf.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/615-cd86579f8cea6630.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/69-93cddc9a5bf7a982.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/806-31c8934bac79c6b4.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/975-3bdd2c1026ccbb7a.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/_not-found-49cbef3cc99cb200.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/api/auth/callback/calendar/page-fd32170d0cd2ad46.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/api/auth/callback/google/page-98a99e283d2c9ad0.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/business/page-69051339b8852d40.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/calendar/page-98ad2d0b23154883.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/contacts/%5Bid%5D/page-cc6aebd8175a3c70.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/contacts/page-3baf354b4c72814b.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/dashboard/page-2b245a80bc7b414a.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/emails/page-e3d1d046af891e64.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/layout-ffa584b293ec4992.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/oauth2/callback/page-d5a8f11fb3191884.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/opportunities/%5Bid%5D/page-71f9676a6c4137fb.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/opportunities/page-d88a0c0758d8cf66.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/page-a8518979d18d874f.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/register/page-60d75c942f2b8059.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/reports/page-1effa378beb594ca.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/settings/page-0c9b353131385fdb.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/tasks/%5Bid%5D/page-6f297ad6a8bce07f.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/app/tasks/page-1b98bbeae05c2486.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/fd9d1056-22a8115f3ca18d53.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/framework-f66176bb897dc684.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/main-app-4193016c8c87a6d6.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/main-e1e988ca12815501.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/pages/_app-75f6107b0260711c.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/pages/_error-9a890acb1e81c3fc.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/chunks/polyfills-c67a75d1b6f99dc8.js",revision:"837c0df77fd5009c9e46d446188ecfd0"},{url:"/_next/static/chunks/webpack-05c98084111c925f.js",revision:"jHrYqtnIDFrYoKRTOewj_"},{url:"/_next/static/css/e8767c2d0e4c317f.css",revision:"e8767c2d0e4c317f"},{url:"/_next/static/jHrYqtnIDFrYoKRTOewj_/_buildManifest.js",revision:"c5f17930a62cbeeb1aeb4f70619dcb61"},{url:"/_next/static/jHrYqtnIDFrYoKRTOewj_/_ssgManifest.js",revision:"b6652df95db52feb4daf4eca35380933"},{url:"/icons/icon-192.png",revision:"3687f8e858902007c52fa42b562766c0"},{url:"/icons/icon-512.png",revision:"f8019cedc7d6706e7573d4d7a62cdad9"},{url:"/manifest.webmanifest",revision:"b483e86981949255c5dc9fd9e3f231ee"}],{ignoreURLParametersMatching:[]}),e.cleanupOutdatedCaches(),e.registerRoute("/",new e.NetworkFirst({cacheName:"start-url",plugins:[{cacheWillUpdate:async({request:e,response:s,event:t,state:n})=>s&&"opaqueredirect"===s.type?new Response(s.body,{status:200,statusText:"OK",headers:s.headers}):s}]}),"GET"),e.registerRoute(({url:e})=>e.pathname.startsWith("/api/"),new e.NetworkOnly({cacheName:"api-network-only",plugins:[]}),"GET"),e.registerRoute(/^https:\/\/fonts\.googleapis\.com\/.*/i,new e.CacheFirst({cacheName:"google-fonts-stylesheets",plugins:[]}),"GET"),e.registerRoute(/^https:\/\/fonts\.gstatic\.com\/.*/i,new e.CacheFirst({cacheName:"google-fonts-webfonts",plugins:[]}),"GET")});
+END_FILE

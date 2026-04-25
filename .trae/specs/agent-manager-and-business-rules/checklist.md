@@ -1,0 +1,10 @@
+- [x] Verified Business Rules are correctly injected into the LangGraph system prompt and `manager_node`
+- [x] Built/verified backend endpoints for GET/POST/PUT Business Rules
+- [x] Built/verified backend endpoint for GET Chat Messages from all customers
+- [x] Updated webhook processing in `chatery.py` and `whatsapp.py` to explicitly include sender name and phone number
+- [x] Updated LangGraph agent state and initial prompt to ensure `contact_name` and `phone` stick to the `information_extractor_node` context
+- [x] Replaced "Coming soon" div in the frontend sidebar with a route to `/agent-manager`
+- [x] Created Agent Manager page on the frontend with tabs for Knowledge, Chat Messages, and Business Rules
+- [x] Displayed and integrated existing Knowledge Graph page into Agent Manager
+- [x] Built UI to display/set Business Rules and save to the DB
+- [x] Built UI to display all customer messages from the DB

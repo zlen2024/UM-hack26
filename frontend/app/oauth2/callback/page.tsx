@@ -1,17 +1,17 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { googleCalendar } from '@/lib/api';
 
-export default function OAuthCallbackPage() {
+function OAuthCallbackContent() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState<string>('Exchanging authorization code...');
 
   const redirectUri = useMemo(() => {
     if (typeof window === 'undefined') return '';
-    return `${window.location.origin}/oauth2/callback`;
+    return `${window.location.origin}/api/auth/callback/google`;
   }, []);
 
   useEffect(() => {
@@ -56,5 +56,13 @@ export default function OAuthCallbackPage() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+export default function OAuthCallbackPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <OAuthCallbackContent />
+    </Suspense>
   );
 }
