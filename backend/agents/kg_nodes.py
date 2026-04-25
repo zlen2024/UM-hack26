@@ -4,9 +4,10 @@ from knowledge_db import KnowledgeDBFactory
 
 def _get_openai_client():
     from openai import OpenAI
+    api_key = os.getenv("ILMU_API_KEY", os.getenv("OPENAI_API_KEY", ""))
     return OpenAI(
-        base_url=os.getenv("OPENAI_API_BASE", "https://stg-api.ilmu.ai/v1"),
-        api_key=os.getenv("OPENAI_API_KEY", "demo-key"),
+        base_url=os.getenv("OPENAI_API_BASE", "https://api.ilmu.ai/v1"),
+        api_key=api_key,
     )
 
 def information_extractor_node(state: dict) -> dict:
