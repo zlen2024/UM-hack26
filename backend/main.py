@@ -20,6 +20,7 @@ from routes import (
     telegram,
     chat_memory,
     business_background,
+    kg,
 )
 
 app = FastAPI(title="UM CRM API", version="1.0.0")
@@ -168,6 +169,7 @@ app.include_router(telegram.router, prefix="/api/telegram", tags=["telegram"])
 app.include_router(privacy.router, prefix="/api/privacy", tags=["privacy"])
 app.include_router(chat_memory.router, prefix="/api/chat-memory", tags=["chat_memory"])
 app.include_router(business_background.router, prefix="/api/business-background", tags=["business_background"])
+app.include_router(kg.router, prefix="/api", tags=["knowledge-graph"])
 
 
 @app.get("/")

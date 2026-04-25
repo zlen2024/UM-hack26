@@ -1,0 +1,5 @@
+- [x] Graph database initializes correctly with `Entity` and `RelatedTo` tables without errors.
+- [x] Information Extractor Agent successfully parses complex sentences into JSON with correct DSNF mapping.
+- [x] Cypher Generator Agent produces valid `MERGE` queries and avoids database duplication.
+- [x] Manager node successfully detects relevant inputs and triggers the knowledge graph pipeline.
+- [x] FastAPI endpoints correctly serve the chat interaction and graph data.

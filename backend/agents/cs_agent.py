@@ -57,6 +57,9 @@ class AgentState(TypedDict, total=False):
     gatekeeper_response: dict
     messages: List[dict]
     worker_error: str
+    extracted_kg_data: dict
+    executed_kg_queries: list
+    trigger_kg: bool
 
 def format_tool_to_openai(tool) -> dict:
     if hasattr(tool, "args_schema") and tool.args_schema:
@@ -146,6 +149,35 @@ RULES:
 
     return {"gatekeeper_response": result, "messages": new_messages}
 
+def evaluate_kg_trigger(text: str) -> bool:
+    """Evaluate if the text contains important customer details (preferences, strategies, etc.)."""
+    if not text:
+        return False
+    
+    prompt = f"""Analyze the following text and determine if it contains important customer details that should be remembered.
+Important details include:
+- Personal preferences (e.g., likes, dislikes, favorite colors, preferred contact methods)
+- Business strategies, goals, or objectives
+- Significant personal or business facts (e.g., "I am the CEO", "We use AWS")
+
+Text: "{text}"
+
+Respond with ONLY 'YES' or 'NO'."""
+
+    try:
+        client = get_ilmu_client()
+        response = client.chat.completions.create(
+            model="ilmu-mini-1.0", # Fast model
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=10,
+        )
+        content = response.choices[0].message.content.strip().upper()
+        return "YES" in content
+    except Exception as e:
+        logger.error(f"[KG Evaluator] Error: {e}")
+        return False
+
 def manager_node(state: AgentState) -> dict:
     logger.info("--- [NODE: MANAGER] Executing ---")
     client = get_ilmu_client()
@@ -197,16 +229,27 @@ RULES:
             ]
         
         logger.info(f"[Manager] Output Tool Calls: {len(msg_dict.get('tool_calls', []))}")
+        
+        # If the manager is done (no tool calls), we evaluate if we need to extract knowledge
+        trigger_kg = False
+        if not msg_dict.get("tool_calls"):
+            user_msg = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+            if user_msg:
+                trigger_kg = evaluate_kg_trigger(user_msg.get("content", ""))
+                logger.info(f"[Manager] Evaluated KG trigger: {trigger_kg}")
+        
         return {
             "messages": messages + [msg_dict],
-            "worker_error": ""
+            "worker_error": "",
+            "trigger_kg": trigger_kg
         }
     except Exception as e:
         logger.error(f"[Manager] Error: {e}", exc_info=True)
         fallback = {"role": "assistant", "content": "I'm sorry, I'm having trouble planning the tasks to resolve your query."}
         return {
             "messages": messages + [fallback],
-            "worker_error": str(e)
+            "worker_error": str(e),
+            "trigger_kg": False
         }
 
 def worker_node(state: AgentState) -> dict:
@@ -278,18 +321,28 @@ def manager_router(state: AgentState) -> str:
         logger.info("[ROUTER] Manager -> Worker (Tasks need execution)")
         return "worker"
         
+    if state.get("trigger_kg"):
+        logger.info("[ROUTER] Manager -> Information Extractor (KG Triggered)")
+        return "information_extractor"
+        
     logger.info("[ROUTER] Manager -> END (Final response ready)")
     return END
+
+from agents.kg_nodes import information_extractor_node, cypher_generator_node
 
 builder = StateGraph(AgentState)
 builder.add_node("gatekeeper", gatekeeper_node)
 builder.add_node("manager", manager_node)
 builder.add_node("worker", worker_node)
+builder.add_node("information_extractor", information_extractor_node)
+builder.add_node("cypher_generator", cypher_generator_node)
 
 builder.add_edge(START, "gatekeeper")
 builder.add_conditional_edges("gatekeeper", gatekeeper_router)
 builder.add_conditional_edges("manager", manager_router)
 builder.add_edge("worker", "manager")
+builder.add_edge("information_extractor", "cypher_generator")
+builder.add_edge("cypher_generator", END)
 
 graph = builder.compile()
 
