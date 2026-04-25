@@ -343,10 +343,10 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
             }
             
             # Execute the graph and capture intermediate outputs via stream()
-            final_state = None
+            current_state = initial_state.copy()
             for event in graph.stream(initial_state):
                 for node_name, node_state in event.items():
-                    final_state = node_state
+                    current_state.update(node_state)
                     
                     # If Gatekeeper just finished and it decided to loop, send the preliminary response!
                     if node_name == "gatekeeper":
@@ -357,8 +357,7 @@ def process_whatsapp_message(message_data: Dict[str, Any], send_callback: Option
                                 logger.info(f"[WhatsApp] Sending preliminary response: {preliminary_msg}")
                                 send_callback(preliminary_msg)
             
-            if final_state is None:
-                final_state = initial_state
+            final_state = current_state
 
             gatekeeper_resp = final_state.get("gatekeeper_response", {})
             if not gatekeeper_resp.get("agent_loop", False):
@@ -435,10 +434,10 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
             }
             
             # Execute the graph and capture intermediate outputs via stream()
-            final_state = None
+            current_state = initial_state.copy()
             for event in graph.stream(initial_state):
                 for node_name, node_state in event.items():
-                    final_state = node_state
+                    current_state.update(node_state)
                     
                     if node_name == "gatekeeper":
                         gatekeeper_resp = node_state.get("gatekeeper_response", {})
@@ -448,8 +447,7 @@ def process_telegram_message(message_data: Dict[str, Any], send_callback: Option
                                 logger.info(f"[Telegram] Sending preliminary response: {preliminary_msg}")
                                 send_callback(preliminary_msg)
             
-            if final_state is None:
-                final_state = initial_state
+            final_state = current_state
 
             gatekeeper_resp = final_state.get("gatekeeper_response", {})
             if not gatekeeper_resp.get("agent_loop", False):
