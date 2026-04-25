@@ -108,12 +108,14 @@ RULES:
 3. If the user's input requires checking orders, retrieving business data, troubleshooting, or anything complex, set "agent_loop" to true, leave "response" blank (""), and extract the core intent into "query"."""
 
     try:
+        messages_for_gatekeeper = [{"role": "system", "content": system_prompt}]
+        for m in state.get("messages", []):
+            messages_for_gatekeeper.append(m)
+        messages_for_gatekeeper.append({"role": "user", "content": state.get("user_input", "")})
+
         response = client.chat.completions.create(
             model="ilmu-glm-5.1",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": state.get("user_input", "")},
-            ],
+            messages=messages_for_gatekeeper,
             temperature=0,
             max_tokens=2000,
             response_format={
@@ -138,7 +140,11 @@ RULES:
             "query": ""
         }
 
-    return {"gatekeeper_response": result}
+    # Append the current query to the conversation history so the manager has the full context
+    query_to_add = result.get('query') or user_input
+    new_messages = state.get("messages", []) + [{"role": "user", "content": query_to_add}]
+
+    return {"gatekeeper_response": result, "messages": new_messages}
 
 def manager_node(state: AgentState) -> dict:
     logger.info("--- [NODE: MANAGER] Executing ---")
@@ -309,28 +315,56 @@ def process_whatsapp_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
     message = message_data.get("message", "")
 
     try:
-        initial_state = {
-            "user_input": message,
-            "user_id": user_id,
-            "contact_name": contact_name,
-            "messages": []
-        }
+        from database import SessionLocal
+        from agents.memory import save_message, get_history
         
-        final_state = graph.invoke(initial_state)
+        session_id = f"wa_{phone}"
+        db = SessionLocal()
         
-        gatekeeper_resp = final_state.get("gatekeeper_response", {})
-        if not gatekeeper_resp.get("agent_loop", False):
-            ai_response = gatekeeper_resp.get("response", "")
-        else:
-            messages = final_state.get("messages", [])
-            if messages:
-                last_message = messages[-1]
-                ai_response = last_message.get("content", "")
+        try:
+            # Save user message
+            save_message(db, session_id, "user", message, user_id=user_id)
+            
+            # Load history (up to 20 messages for context)
+            db_history = get_history(db, session_id, limit=20, user_id=user_id)
+            
+            # Format history for the agent (excluding the message we just saved to avoid duplication if we handle it below)
+            # Actually, the agent expects the current message to be in state.user_input and state.messages if we pass it.
+            # Let's pass the history as previous messages.
+            history_messages = []
+            for msg in db_history[:-1]:  # Exclude the current message we just saved
+                if msg.role in ["user", "assistant", "system"]:
+                    history_messages.append({"role": msg.role, "content": msg.content})
+            
+            initial_state = {
+                "user_input": message,
+                "user_id": user_id,
+                "contact_name": contact_name,
+                "messages": history_messages
+            }
+            
+            final_state = graph.invoke(initial_state)
+            
+            gatekeeper_resp = final_state.get("gatekeeper_response", {})
+            if not gatekeeper_resp.get("agent_loop", False):
+                ai_response = gatekeeper_resp.get("response", "")
             else:
-                ai_response = "I'm sorry, I'm having trouble processing your request right now."
+                messages = final_state.get("messages", [])
+                if messages:
+                    last_message = messages[-1]
+                    ai_response = last_message.get("content", "")
+                else:
+                    ai_response = "I'm sorry, I'm having trouble processing your request right now."
+            
+            # Save assistant response
+            if ai_response:
+                save_message(db, session_id, "assistant", ai_response, user_id=user_id)
+                
+        finally:
+            db.close()
             
     except Exception as e:
-        print(f"[WhatsApp] Error calling LangGraph: {e}")
+        logger.error(f"[WhatsApp] Error calling LangGraph: {e}", exc_info=True)
         ai_response = "I'm sorry, I'm having trouble processing your request right now."
 
     return {
@@ -359,28 +393,53 @@ def process_telegram_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
     message = message_data.get("message", "")
 
     try:
-        initial_state = {
-            "user_input": message,
-            "user_id": user_id,
-            "contact_name": contact_name,
-            "messages": []
-        }
+        from database import SessionLocal
+        from agents.memory import save_message, get_history
         
-        final_state = graph.invoke(initial_state)
+        session_id = f"tg_{chat_id}"
+        db = SessionLocal()
         
-        gatekeeper_resp = final_state.get("gatekeeper_response", {})
-        if not gatekeeper_resp.get("agent_loop", False):
-            ai_response = gatekeeper_resp.get("response", "")
-        else:
-            messages = final_state.get("messages", [])
-            if messages:
-                last_message = messages[-1]
-                ai_response = last_message.get("content", "")
+        try:
+            # Save user message
+            save_message(db, session_id, "user", message, user_id=user_id)
+            
+            # Load history (up to 20 messages for context)
+            db_history = get_history(db, session_id, limit=20, user_id=user_id)
+            
+            history_messages = []
+            for msg in db_history[:-1]:  # Exclude the current message we just saved
+                if msg.role in ["user", "assistant", "system"]:
+                    history_messages.append({"role": msg.role, "content": msg.content})
+            
+            initial_state = {
+                "user_input": message,
+                "user_id": user_id,
+                "contact_name": contact_name,
+                "messages": history_messages
+            }
+            
+            final_state = graph.invoke(initial_state)
+            
+            gatekeeper_resp = final_state.get("gatekeeper_response", {})
+            if not gatekeeper_resp.get("agent_loop", False):
+                ai_response = gatekeeper_resp.get("response", "")
             else:
-                ai_response = "I'm sorry, I'm having trouble processing your request right now."
+                messages = final_state.get("messages", [])
+                if messages:
+                    last_message = messages[-1]
+                    ai_response = last_message.get("content", "")
+                else:
+                    ai_response = "I'm sorry, I'm having trouble processing your request right now."
+            
+            # Save assistant response
+            if ai_response:
+                save_message(db, session_id, "assistant", ai_response, user_id=user_id)
+                
+        finally:
+            db.close()
             
     except Exception as e:
-        print(f"[Telegram] Error calling LangGraph: {e}")
+        logger.error(f"[Telegram] Error calling LangGraph: {e}", exc_info=True)
         ai_response = "I'm sorry, I'm having trouble processing your request right now."
 
     return {
