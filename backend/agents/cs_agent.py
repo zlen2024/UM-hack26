@@ -209,7 +209,10 @@ Respond with ONLY 'YES' or 'NO'."""
             temperature=0.0,
             max_tokens=10,
         )
-        content = response.choices[0].message.content.strip().upper()
+        content = response.choices[0].message.content
+        if not content:
+            return False
+        content = content.strip().upper()
         return "YES" in content
     except Exception as e:
         logger.error(f"[KG Evaluator] Error: {e}")
@@ -280,14 +283,14 @@ You handle user queries, execute necessary backend tasks using tools, and mainta
             if user_msg:
                 trigger_kg = evaluate_kg_trigger(user_msg.get("content", ""))
                 logger.info(f"[Manager] Evaluated KG trigger: {trigger_kg}")
-        
+                
         return {
             "messages": messages + [msg_dict],
             "worker_error": "",
             "trigger_kg": trigger_kg
         }
     except Exception as e:
-        logger.error(f"[Manager] Error: {e}", exc_info=True)
+        logger.error(f"[Manager] Error parsing response: {e}", exc_info=True)
         fallback = {"role": "assistant", "content": "I'm sorry, I'm having trouble planning the tasks to resolve your query."}
         return {
             "messages": messages + [fallback],
