@@ -228,12 +228,21 @@ export default function SettingsPage() {
 
   const handleConnectNeonize = async () => {
     if (!user?.id) return;
+    if (integrationStatus.whatsapp) {
+      alert("You cannot have both WhatsApp Cloud API and Neonize connected at the same time. Please disconnect WhatsApp Bot first.");
+      return;
+    }
     try {
-      await whatsapp.neonizeConnect();
-      setShowNeonizeModal(true);
+      setShowNeonizeModal(true); // show modal immediately to indicate loading
+      const res = await whatsapp.neonizeStatus(user.id);
+      if (!res.data.started) {
+        await whatsapp.neonizeConnect();
+      }
+      setNeonizeStatus(res.data);
     } catch (e) {
       console.error('Failed to connect Neonize', e);
       alert('Failed to start WhatsApp connection');
+      setShowNeonizeModal(false);
     }
   };
 
@@ -436,7 +445,7 @@ export default function SettingsPage() {
                 <IntegrationBox
                   icon={<MessageSquare size={22} className="text-green-600" />}
                   name="WhatsApp (QR Scan)"
-                  desc="Connect via Neonize by scanning a QR code."
+                  desc="Unofficial: Connect via Neonize by scanning a QR code (security risks)."
                   status={neonizeStatus.connected ? 'on' : 'off'}
                   onConnect={handleConnectNeonize}
                   onDisconnect={() => handleDisconnect('neonize')}
@@ -444,7 +453,7 @@ export default function SettingsPage() {
                 <IntegrationBox
                   icon={<MessageSquare size={22} className="text-green-500" />}
                   name="WhatsApp Bot"
-                  desc="Receive and reply to WhatsApp messages."
+                  desc="Receive and reply to WhatsApp messages. Requires Cloud API."
                   status={integrationStatus.whatsapp ? 'on' : 'off'}
                   onConnect={() => handleConnect('whatsapp')}
                   onDisconnect={() => handleDisconnect('whatsapp')}
