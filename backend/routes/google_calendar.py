@@ -5,6 +5,7 @@ from pathlib import Path
 import secrets
 import time
 from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 from urllib.parse import urlencode
 from uuid import uuid4
 import os
@@ -180,6 +181,16 @@ def _execute_google_request(callable_request, error_prefix: str):
         raise HTTPException(status_code=400, detail=f"{error_prefix}: {error_message}")
 
 
+@dataclass
+class CalendarEvent:
+    title: str
+    description: str
+    start_time: datetime
+    end_time: datetime
+    attendee_emails: List[str]
+    calendar_id: str = "primary"
+
+
 def _normalize_attendees(emails: List[str]) -> List[str]:
     seen = set()
     cleaned = []
@@ -196,25 +207,20 @@ def _normalize_attendees(emails: List[str]) -> List[str]:
 
 def _create_google_calendar_event(
     service,
-    title: str,
-    description: str,
-    start_time: datetime,
-    end_time: datetime,
-    attendee_emails: List[str],
-    calendar_id: str,
+    event_data: CalendarEvent,
 ) -> str:
     """Create a real event in Google Calendar and return event ID"""
     try:
-        attendees = _normalize_attendees(attendee_emails)
+        attendees = _normalize_attendees(event_data.attendee_emails)
         event = {
-            'summary': title,
-            'description': description,
+            'summary': event_data.title,
+            'description': event_data.description,
             'start': {
-                'dateTime': start_time.isoformat(),
+                'dateTime': event_data.start_time.isoformat(),
                 'timeZone': 'UTC'
             },
             'end': {
-                'dateTime': end_time.isoformat(),
+                'dateTime': event_data.end_time.isoformat(),
                 'timeZone': 'UTC'
             },
         }
@@ -223,7 +229,7 @@ def _create_google_calendar_event(
             event['attendees'] = [{'email': email} for email in attendees]
         
         result = service.events().insert(
-            calendarId=calendar_id,
+            calendarId=event_data.calendar_id,
             body=event,
             sendUpdates='all'
         ).execute()
@@ -469,14 +475,17 @@ def save_credentials(
         attendee_emails = _normalize_attendees(
             [test_email, current_user.email]
         )
+        event_data = CalendarEvent(
+            title=title,
+            description=description,
+            start_time=start_time,
+            end_time=end_time,
+            attendee_emails=attendee_emails,
+            calendar_id="primary",
+        )
         google_event_id = _create_google_calendar_event(
             service,
-            title,
-            description,
-            start_time,
-            end_time,
-            attendee_emails,
-            "primary",
+            event_data,
         )
         print(f"✅ Created REAL Google Calendar event: {google_event_id}")
         success = True
@@ -650,14 +659,17 @@ def create_event(
 
     # Create in real Google Calendar
     try:
+        event_data = CalendarEvent(
+            title=payload.title,
+            description=payload.description or "",
+            start_time=payload.start_time,
+            end_time=payload.end_time,
+            attendee_emails=attendee_emails,
+            calendar_id=resolved_calendar_id,
+        )
         google_event_id = _create_google_calendar_event(
             service,
-            payload.title,
-            payload.description or "",
-            payload.start_time,
-            payload.end_time,
-            attendee_emails,
-            resolved_calendar_id,
+            event_data,
         )
         event_id = google_event_id
         print(f"✅ Created Google Calendar event: {event_id}")
