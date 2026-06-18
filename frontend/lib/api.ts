@@ -143,3 +143,12 @@ export const whatsapp = {
   }) => api.post('/whatsapp/config', data),
   status: () => api.get('/whatsapp/status'),
 };
+export const telegram = {
+  getConfig: (bot_token: string) =>
+    api.get(`/telegram/config/${bot_token}`),
+  createConfig: (data: {
+    bot_token: string;
+    user_id: number;
+    webhook_url: string;
+  }) => api.post('/telegram/config', data),
+};

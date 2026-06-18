@@ -3,7 +3,6 @@ import json
 from typing import Optional
 from openai import OpenAI
 from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.tools import ToolNode
 
 from .state import AgentState
 from .tools import CRM_TOOLS, UserContext
@@ -46,10 +45,9 @@ def build_graph():
     workflow.add_conditional_edges(
         "agent",
         should_use_tools,
-        {"tools": "tools", "respond": "respond"}
+        {"tools": "tools", "respond": END}
     )
     workflow.add_edge("tools", "agent")
-    workflow.add_edge("respond", END)
     
     return workflow.compile()
 
@@ -97,6 +95,7 @@ def agent_node(state: AgentState) -> dict:
                     "name": t.name,
                     "description": t.description,
                     "parameters": t.args_schema.schema() if hasattr(t, "args_schema") else {"type": "object", "properties": {}}
+                }
             })
         except:
             tool_defs.append({
@@ -105,6 +104,7 @@ def agent_node(state: AgentState) -> dict:
                     "name": t.name,
                     "description": t.description,
                     "parameters": {"type": "object", "properties": {}}
+                }
             })
     
     try:
