@@ -10,7 +10,7 @@ import json
 import logging
 import re
 
-from .llm import CHAT_MODEL, format_tool_to_openai, get_chat_client, parse_llm_json
+from .llm import CHAT_MODEL, complete_json, format_tool_to_openai, get_chat_client, parse_llm_json
 from .prompts import GATEKEEPER_SCHEMA, gatekeeper_system_prompt, manager_system_prompt
 from .state import AgentState
 from .tools import CRM_TOOLS
@@ -64,24 +64,15 @@ def gatekeeper_node(state: AgentState) -> dict:
         system_prompt += f"\n=== RECENT CONVERSATION HISTORY ===\n{history}"
 
     try:
-        response = get_chat_client().chat.completions.create(
-            model=CHAT_MODEL,
+        result = complete_json(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f'Input: "{user_input}"'},
             ],
-            temperature=0,
+            schema=GATEKEEPER_SCHEMA,
+            schema_name="gatekeeper_response",
             max_tokens=2000,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "gatekeeper_response",
-                    "strict": True,
-                    "schema": GATEKEEPER_SCHEMA,
-                },
-            },
         )
-        result = parse_llm_json(response.choices[0].message.content)
         logger.info(
             f"[Gatekeeper] agent_loop={result.get('agent_loop')} "
             f"contains_knowledge={result.get('contains_knowledge')}"

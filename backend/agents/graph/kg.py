@@ -9,7 +9,7 @@ import json
 import logging
 import os
 
-from .llm import CHAT_MODEL, get_chat_client, parse_llm_json
+from .llm import CHAT_MODEL, complete_json, get_chat_client, parse_llm_json
 
 logger = logging.getLogger("CS_Agent_Workflow")
 
@@ -45,18 +45,11 @@ Regardless of the language, output valid JSON with a single boolean field "trigg
 Output {{"trigger": true}} if the text contains important customer details, else {{"trigger": false}}."""
 
     try:
-        client = get_chat_client()
-        response = client.chat.completions.create(
-            model=_EXTRACT_MODEL,
+        result = complete_json(
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
             max_tokens=2000,
-            response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content
-        if not content:
-            return False
-        return bool(parse_llm_json(content).get("trigger", False))
+        return bool(result.get("trigger", False))
     except Exception as e:
         logger.error(f"[KG Evaluator] Error: {e}")
         return False
@@ -112,16 +105,14 @@ Output:
 """
 
     try:
-        response = get_chat_client().chat.completions.create(
-            model=_EXTRACT_MODEL,
+        extracted_data = complete_json(
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": text_to_extract},
             ],
             temperature=0.0,
-            response_format={"type": "json_object"},
+            max_tokens=2000,
         )
-        extracted_data = parse_llm_json(response.choices[0].message.content)
     except Exception as e:
         logger.error(f"[KG Extractor] Error: {e}")
         extracted_data = {"nodes": [], "edges": []}
@@ -160,16 +151,15 @@ Output:
 """
 
     try:
-        response = get_chat_client().chat.completions.create(
-            model=_EXTRACT_MODEL,
+        query_data = complete_json(
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": json.dumps(extracted_data)},
             ],
             temperature=0.0,
-            response_format={"type": "json_object"},
+            max_tokens=2000,
         )
-        queries = parse_llm_json(response.choices[0].message.content).get("queries", [])
+        queries = query_data.get("queries", [])
     except Exception as e:
         logger.error(f"[KG Cypher] Generation error: {e}")
         queries = []
