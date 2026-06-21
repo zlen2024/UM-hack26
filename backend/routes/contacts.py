@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from database import get_db
-from models import User, Contact
+from models import User
 from schemas import ContactCreate, ContactUpdate, ContactResponse
 from auth import get_current_user
+from services import contacts as contacts_service
 
 router = APIRouter()
 
@@ -15,14 +16,7 @@ def get_contacts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Contact)
-    if search:
-        query = query.filter(
-            (Contact.name.contains(search))
-            | (Contact.email.contains(search))
-            | (Contact.company.contains(search))
-        )
-    return query.order_by(Contact.created_at.desc()).all()
+    return contacts_service.list_contacts(db, current_user.id, search=search)
 
 
 @router.get("/{contact_id}", response_model=ContactResponse)
@@ -31,7 +25,7 @@ def get_contact(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    contact = contacts_service.get_contact(db, current_user.id, contact_id)
     if not contact:
         raise HTTPException(status_code=404, detail="Contact not found")
     return contact
@@ -43,11 +37,7 @@ def create_contact(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_contact = Contact(**contact.model_dump(), user_id=current_user.id)
-    db.add(db_contact)
-    db.commit()
-    db.refresh(db_contact)
-    return db_contact
+    return contacts_service.create_contact(db, current_user.id, **contact.model_dump())
 
 
 @router.put("/{contact_id}", response_model=ContactResponse)
@@ -57,17 +47,12 @@ def update_contact(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_contact = db.query(Contact).filter(Contact.id == contact_id).first()
-    if not db_contact:
+    updated = contacts_service.update_contact(
+        db, current_user.id, contact_id, **contact.model_dump(exclude_unset=True)
+    )
+    if not updated:
         raise HTTPException(status_code=404, detail="Contact not found")
-
-    update_data = contact.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_contact, key, value)
-
-    db.commit()
-    db.refresh(db_contact)
-    return db_contact
+    return updated
 
 
 @router.delete("/{contact_id}")
@@ -76,10 +61,6 @@ def delete_contact(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_contact = db.query(Contact).filter(Contact.id == contact_id).first()
-    if not db_contact:
+    if not contacts_service.delete_contact(db, current_user.id, contact_id):
         raise HTTPException(status_code=404, detail="Contact not found")
-
-    db.delete(db_contact)
-    db.commit()
     return {"message": "Contact deleted successfully"}

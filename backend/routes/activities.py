@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from database import get_db
-from models import User, Activity
+from models import User
 from schemas import ActivityCreate, ActivityUpdate, ActivityResponse
 from auth import get_current_user
+from services import activities as activities_service
 
 router = APIRouter()
 
@@ -16,12 +17,9 @@ def get_activities(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Activity)
-    if contact_id:
-        query = query.filter(Activity.contact_id == contact_id)
-    if opportunity_id:
-        query = query.filter(Activity.opportunity_id == opportunity_id)
-    return query.order_by(Activity.created_at.desc()).all()
+    return activities_service.list_activities(
+        db, current_user.id, contact_id=contact_id, opportunity_id=opportunity_id
+    )
 
 
 @router.get("/{activity_id}", response_model=ActivityResponse)
@@ -30,7 +28,7 @@ def get_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    activity = db.query(Activity).filter(Activity.id == activity_id).first()
+    activity = activities_service.get_activity(db, current_user.id, activity_id)
     if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
     return activity
@@ -42,11 +40,7 @@ def create_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_activity = Activity(**activity.model_dump(), user_id=current_user.id)
-    db.add(db_activity)
-    db.commit()
-    db.refresh(db_activity)
-    return db_activity
+    return activities_service.create_activity(db, current_user.id, **activity.model_dump())
 
 
 @router.put("/{activity_id}", response_model=ActivityResponse)
@@ -56,17 +50,12 @@ def update_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_activity = db.query(Activity).filter(Activity.id == activity_id).first()
-    if not db_activity:
+    updated = activities_service.update_activity(
+        db, current_user.id, activity_id, **activity.model_dump(exclude_unset=True)
+    )
+    if not updated:
         raise HTTPException(status_code=404, detail="Activity not found")
-
-    update_data = activity.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_activity, key, value)
-
-    db.commit()
-    db.refresh(db_activity)
-    return db_activity
+    return updated
 
 
 @router.delete("/{activity_id}")
@@ -75,10 +64,6 @@ def delete_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_activity = db.query(Activity).filter(Activity.id == activity_id).first()
-    if not db_activity:
+    if not activities_service.delete_activity(db, current_user.id, activity_id):
         raise HTTPException(status_code=404, detail="Activity not found")
-
-    db.delete(db_activity)
-    db.commit()
     return {"message": "Activity deleted successfully"}

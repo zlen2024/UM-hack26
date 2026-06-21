@@ -31,9 +31,11 @@ The project follows a decoupled client-server architecture:
 - `main.py`: The FastAPI application entry point. Handles middleware configuration (CORS), database table creation, schema migrations, and router registration.
 - `database.py`: Manages the SQLAlchemy database engine, session pooling (NullPool for compatibility), and programmatic migrations.
 - `models.py`: Defines the SQLAlchemy ORM models representing the database schema.
-- `routes/`: Contains all REST API endpoints.
+- `services/`: The shared CRM service layer — the **single source of truth** for create/read/update/delete and reporting. Each function takes an explicit `db` session and `user_id` and returns plain JSON-serializable data. The REST routes, the agent tools, and the `/api/agent/execute` registry all delegate here, so business logic and `user_id` scoping live in exactly one place.
+  - `contacts.py`, `opportunities.py`, `tasks.py`, `activities.py`, `reports.py`.
+- `routes/`: Thin REST API endpoints (auth, validation, status codes) that delegate to `services/`.
   - `auth.py`, `users.py`: User authentication (JWT) and management.
-  - `contacts.py`, `opportunities.py`, `tasks.py`, `activities.py`: CRUD operations for core CRM entities.
+  - `contacts.py`, `opportunities.py`, `tasks.py`, `activities.py`, `reports.py`: CRM entity endpoints over the service layer.
   - `whatsapp.py`, `telegram.py`, `chatery.py`: Webhook handlers for external messaging platforms.
   - `gmail.py`, `google_calendar.py`, `emails.py`: Google Workspace integrations.
 - `agents/`: Contains the LangGraph-based AI agent logic.
@@ -44,8 +46,9 @@ The project follows a decoupled client-server architecture:
     - `prompts.py` — gatekeeper/manager system prompts.
     - `nodes.py` — `gatekeeper`, `manager`, `worker`, `force_response` nodes (tool-loop capped by `MAX_TOOL_ITERATIONS`).
     - `edges.py` — conditional routers.
-    - `tools.py` — the CRM tool set (`CRM_TOOLS`).
+    - `tools.py` — the CRM tool set (`CRM_TOOLS`), which wrap the `services/` layer.
     - `kg.py` — background knowledge-graph extraction.
+  - `registry.py`: Maps the `/api/agent/execute` function names to `services/` handlers.
   - `memory.py`: Conversation persistence and history compaction.
 
 ### Frontend (`/frontend`)

@@ -1,11 +1,13 @@
-from .contacts import (
+# The CRUD/report logic now lives in the shared ``services`` package. These
+# re-exports are kept for backwards compatibility.
+from services.contacts import (
     create_contact,
     get_contact,
     list_contacts,
     update_contact,
     delete_contact,
 )
-from .opportunities import (
+from services.opportunities import (
     create_opportunity,
     get_opportunity,
     list_opportunities,
@@ -13,7 +15,7 @@ from .opportunities import (
     update_opportunity_stage,
     delete_opportunity,
 )
-from .tasks import (
+from services.tasks import (
     create_task,
     get_task,
     list_tasks,
@@ -21,14 +23,14 @@ from .tasks import (
     update_task_status,
     delete_task,
 )
-from .activities import (
+from services.activities import (
     create_activity,
     get_activity,
     list_activities,
     update_activity,
     delete_activity,
 )
-from .reports import (
+from services.reports import (
     get_dashboard,
     get_pipeline_report,
     get_contact_activity_report,

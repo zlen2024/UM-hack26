@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from database import get_db
-from models import User, Task
+from models import User
 from schemas import TaskCreate, TaskUpdate, TaskResponse
 from auth import get_current_user
+from services import tasks as tasks_service
 
 router = APIRouter()
+
+TASK_STATUSES = ["pending", "in_progress", "completed"]
 
 
 @router.get("", response_model=List[TaskResponse])
@@ -16,12 +19,7 @@ def get_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Task)
-    if status:
-        query = query.filter(Task.status == status)
-    if assigned_to:
-        query = query.filter(Task.assigned_to == assigned_to)
-    return query.order_by(Task.due_date.asc().nullslast(), Task.created_at.desc()).all()
+    return tasks_service.list_tasks(db, current_user.id, status=status, assigned_to=assigned_to)
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
@@ -30,7 +28,7 @@ def get_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = tasks_service.get_task(db, current_user.id, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
@@ -42,11 +40,7 @@ def create_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_task = Task(**task.model_dump(), user_id=current_user.id)
-    db.add(db_task)
-    db.commit()
-    db.refresh(db_task)
-    return db_task
+    return tasks_service.create_task(db, current_user.id, **task.model_dump())
 
 
 @router.put("/{task_id}", response_model=TaskResponse)
@@ -56,17 +50,12 @@ def update_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_task = db.query(Task).filter(Task.id == task_id).first()
-    if not db_task:
+    updated = tasks_service.update_task(
+        db, current_user.id, task_id, **task.model_dump(exclude_unset=True)
+    )
+    if not updated:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    update_data = task.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_task, key, value)
-
-    db.commit()
-    db.refresh(db_task)
-    return db_task
+    return updated
 
 
 @router.put("/{task_id}/status")
@@ -76,16 +65,12 @@ def update_task_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    valid_statuses = ["pending", "in_progress", "completed"]
-    if status not in valid_statuses:
+    if status not in TASK_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid status")
 
-    db_task = db.query(Task).filter(Task.id == task_id).first()
-    if not db_task:
+    updated = tasks_service.update_task_status(db, current_user.id, task_id, status)
+    if not updated:
         raise HTTPException(status_code=404, detail="Task not found")
-
-    db_task.status = status
-    db.commit()
     return {"message": "Status updated", "status": status}
 
 
@@ -95,10 +80,6 @@ def delete_task(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_task = db.query(Task).filter(Task.id == task_id).first()
-    if not db_task:
+    if not tasks_service.delete_task(db, current_user.id, task_id):
         raise HTTPException(status_code=404, detail="Task not found")
-
-    db.delete(db_task)
-    db.commit()
     return {"message": "Task deleted successfully"}

@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from database import get_db
-from models import User, Opportunity
+from models import User
 from schemas import OpportunityCreate, OpportunityUpdate, OpportunityResponse
 from auth import get_current_user
+from services import opportunities as opportunities_service
 
 router = APIRouter()
 
@@ -18,12 +19,9 @@ def get_opportunities(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Opportunity)
-    if stage:
-        query = query.filter(Opportunity.stage == stage)
-    if assigned_to:
-        query = query.filter(Opportunity.assigned_to == assigned_to)
-    return query.order_by(Opportunity.created_at.desc()).all()
+    return opportunities_service.list_opportunities(
+        db, current_user.id, stage=stage, assigned_to=assigned_to
+    )
 
 
 @router.get("/{opportunity_id}", response_model=OpportunityResponse)
@@ -32,7 +30,7 @@ def get_opportunity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    opportunity = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
+    opportunity = opportunities_service.get_opportunity(db, current_user.id, opportunity_id)
     if not opportunity:
         raise HTTPException(status_code=404, detail="Opportunity not found")
     return opportunity
@@ -44,11 +42,9 @@ def create_opportunity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_opportunity = Opportunity(**opportunity.model_dump(), user_id=current_user.id)
-    db.add(db_opportunity)
-    db.commit()
-    db.refresh(db_opportunity)
-    return db_opportunity
+    return opportunities_service.create_opportunity(
+        db, current_user.id, **opportunity.model_dump()
+    )
 
 
 @router.put("/{opportunity_id}", response_model=OpportunityResponse)
@@ -58,17 +54,12 @@ def update_opportunity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_opportunity = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
-    if not db_opportunity:
+    updated = opportunities_service.update_opportunity(
+        db, current_user.id, opportunity_id, **opportunity.model_dump(exclude_unset=True)
+    )
+    if not updated:
         raise HTTPException(status_code=404, detail="Opportunity not found")
-
-    update_data = opportunity.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_opportunity, key, value)
-
-    db.commit()
-    db.refresh(db_opportunity)
-    return db_opportunity
+    return updated
 
 
 @router.put("/{opportunity_id}/stage")
@@ -81,12 +72,11 @@ def update_opportunity_stage(
     if stage not in STAGES:
         raise HTTPException(status_code=400, detail="Invalid stage")
 
-    db_opportunity = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
-    if not db_opportunity:
+    updated = opportunities_service.update_opportunity_stage(
+        db, current_user.id, opportunity_id, stage
+    )
+    if not updated:
         raise HTTPException(status_code=404, detail="Opportunity not found")
-
-    db_opportunity.stage = stage
-    db.commit()
     return {"message": "Stage updated", "stage": stage}
 
 
@@ -96,10 +86,6 @@ def delete_opportunity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_opportunity = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
-    if not db_opportunity:
+    if not opportunities_service.delete_opportunity(db, current_user.id, opportunity_id):
         raise HTTPException(status_code=404, detail="Opportunity not found")
-
-    db.delete(db_opportunity)
-    db.commit()
     return {"message": "Opportunity deleted successfully"}

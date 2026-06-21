@@ -1,5 +1,5 @@
 from typing import Dict, Callable, Any, List
-from . import contacts, opportunities, tasks, activities, reports
+from services import contacts, opportunities, tasks, activities, reports
 
 
 FUNCTION_REGISTRY: Dict[str, Dict[str, Any]] = {

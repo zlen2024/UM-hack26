@@ -7,7 +7,13 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from models import Contact, Opportunity, Task, Activity, User
+from services import (
+    activities as activities_service,
+    contacts as contacts_service,
+    opportunities as opportunities_service,
+    reports as reports_service,
+    tasks as tasks_service,
+)
 
 
 def get_db_session():
@@ -25,16 +31,32 @@ def _kg_factory():
     return KnowledgeDBFactory
 
 
+# ============ Tool result helpers ============
+# The CRM tools delegate all database work to the shared service layer and wrap
+# the returned dicts in a small success/error envelope for the LLM.
+
+def _ok(**payload) -> str:
+    return json.dumps({"success": True, **payload})
+
+
+def _err(exc: Exception) -> str:
+    return json.dumps({"success": False, "error": str(exc), "error_type": "internal_error"})
+
+
+def _not_found(message: str) -> str:
+    return json.dumps({"success": False, "error": "not_found", "message": message})
+
+
 # ============ User Context Helper ============
 
 class UserContext:
     """Thread-local user context for tools."""
     _user_id = None
-    
+
     @classmethod
     def set_user_id(cls, user_id: int):
         cls._user_id = user_id
-    
+
     @classmethod
     def get_user_id(cls) -> int:
         return cls._user_id or 1
@@ -177,49 +199,25 @@ class UpdateKgEdgeInput(BaseModel):
     properties: Dict[str, Any] = Field(default_factory=dict, description="Dictionary of properties")
 
 # ============ Tool Implementations ============
+# Each CRM tool resolves the user, opens a session, delegates to the service
+# layer, and wraps the result for the agent.
 
 @tool("create_contact", args_schema=CreateContactInput)
 def create_contact(user_id: int = 1, name: str = "", email: Optional[str] = None, phone: Optional[str] = None,
                  company: Optional[str] = None, notes: Optional[str] = None) -> str:
     """Create a new contact in the CRM system. Use when a customer provides their name or wants to register."""
     try:
-        # Get actual user_id from context if not provided
         actual_user_id = user_id or UserContext.get_user_id() or 1
-        
         db: Session = get_db_session()
         try:
-            db_contact = Contact(
-                user_id=actual_user_id,
-                name=name,
-                email=email,
-                phone=phone,
-                company=company,
-                notes=notes,
+            data = contacts_service.create_contact(
+                db, actual_user_id, name=name, email=email, phone=phone, company=company, notes=notes
             )
-            db.add(db_contact)
-            db.commit()
-            db.refresh(db_contact)
-            return json.dumps({
-                "success": True,
-                "contact_id": db_contact.id,
-                "message": f"Contact '{name}' created successfully",
-                "data": {
-                    "id": db_contact.id,
-                    "name": db_contact.name,
-                    "email": db_contact.email,
-                    "phone": db_contact.phone,
-                    "company": db_contact.company,
-                }
-            })
         finally:
             db.close()
+        return _ok(contact_id=data["id"], message=f"Contact '{name}' created successfully", data=data)
     except Exception as e:
-        return json.dumps({
-            "success": False,
-            "error": str(e),
-            "error_type": "internal_error",
-            "message": "Failed to create contact. Please try again."
-        })
+        return _err(e)
 
 
 @tool("get_contact", args_schema=GetContactInput)
@@ -229,31 +227,14 @@ def get_contact(user_id: int = 1, contact_id: int = 0) -> str:
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            contact = db.query(Contact).filter(
-                Contact.id == contact_id, 
-                Contact.user_id == actual_user_id
-            ).first()
-            if not contact:
-                return json.dumps({
-                    "success": False,
-                    "error": "not_found",
-                    "message": f"Contact with ID {contact_id} not found."
-                })
-            return json.dumps({
-                "success": True,
-                "data": {
-                    "id": contact.id,
-                    "name": contact.name,
-                    "email": contact.email,
-                    "phone": contact.phone,
-                    "company": contact.company,
-                    "notes": contact.notes,
-                }
-            })
+            data = contacts_service.get_contact(db, actual_user_id, contact_id)
         finally:
             db.close()
+        if not data:
+            return _not_found(f"Contact with ID {contact_id} not found.")
+        return _ok(data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("list_contacts", args_schema=ListContactsInput)
@@ -263,69 +244,33 @@ def list_contacts(user_id: int = 1, search: Optional[str] = None) -> str:
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            query = db.query(Contact).filter(Contact.user_id == actual_user_id)
-            if search:
-                query = query.filter(
-                    (Contact.name.contains(search)) |
-                    (Contact.email.contains(search)) |
-                    (Contact.company.contains(search))
-                )
-            contacts = query.order_by(Contact.created_at.desc()).limit(50).all()
-            return json.dumps({
-                "success": True,
-                "contacts": [{
-                    "id": c.id,
-                    "name": c.name,
-                    "email": c.email,
-                    "phone": c.phone,
-                    "company": c.company,
-                } for c in contacts]
-            })
+            data = contacts_service.list_contacts(db, actual_user_id, search=search)
         finally:
             db.close()
+        return _ok(contacts=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("update_contact", args_schema=UpdateContactInput)
 def update_contact(user_id: int = 1, contact_id: int = 0, name: Optional[str] = None, email: Optional[str] = None,
-                 phone: Optional[str] = None, company: Optional[str] = None,
-                 notes: Optional[str] = None) -> str:
-    """Update an existing contact's information."""
+                 phone: Optional[str] = None, company: Optional[str] = None, notes: Optional[str] = None) -> str:
+    """Update an existing contact's details such as email, phone, company, or notes."""
     try:
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            contact = db.query(Contact).filter(
-                Contact.id == contact_id,
-                Contact.user_id == actual_user_id
-            ).first()
-            if not contact:
-                return json.dumps({
-                    "success": False,
-                    "error": "not_found",
-                    "message": f"Contact with ID {contact_id} not found."
-                })
-            if name:
-                contact.name = name
-            if email:
-                contact.email = email
-            if phone:
-                contact.phone = phone
-            if company:
-                contact.company = company
-            if notes:
-                contact.notes = notes
-            db.commit()
-            return json.dumps({
-                "success": True,
-                "message": "Contact updated successfully",
-                "data": {"id": contact.id, "name": contact.name}
-            })
+            data = contacts_service.update_contact(
+                db, actual_user_id, contact_id,
+                name=name, email=email, phone=phone, company=company, notes=notes,
+            )
         finally:
             db.close()
+        if not data:
+            return _not_found(f"Contact with ID {contact_id} not found.")
+        return _ok(message="Contact updated successfully", data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("create_opportunity", args_schema=CreateOpportunityInput)
@@ -333,42 +278,24 @@ def create_opportunity(user_id: int = 1, title: str = "", value: float = 0, stag
                       contact_id: Optional[int] = None,
                       expected_close_date: Optional[str] = None) -> str:
     """Create a new sales opportunity/deal. Use when a customer shows buying interest."""
-    valid_stages = ["lead", "qualified", "proposal", "won", "lost"]
-    if stage not in valid_stages:
-        stage = "lead"
     try:
         actual_user_id = user_id or UserContext.get_user_id() or 1
+        close_date = datetime.strptime(expected_close_date, "%Y-%m-%d").date() if expected_close_date else None
         db: Session = get_db_session()
         try:
-            close_date = None
-            if expected_close_date:
-                close_date = datetime.strptime(expected_close_date, "%Y-%m-%d").date()
-            db_opportunity = Opportunity(
-                user_id=actual_user_id,
-                title=title,
-                value=Decimal(str(value)),
-                stage=stage,
-                contact_id=contact_id,
-                expected_close_date=close_date,
+            data = opportunities_service.create_opportunity(
+                db, actual_user_id, title=title, value=Decimal(str(value)), stage=stage,
+                contact_id=contact_id, expected_close_date=close_date,
             )
-            db.add(db_opportunity)
-            db.commit()
-            db.refresh(db_opportunity)
-            return json.dumps({
-                "success": True,
-                "opportunity_id": db_opportunity.id,
-                "message": f"Opportunity '{title}' created at {stage} stage",
-                "data": {
-                    "id": db_opportunity.id,
-                    "title": db_opportunity.title,
-                    "value": str(db_opportunity.value),
-                    "stage": db_opportunity.stage,
-                }
-            })
         finally:
             db.close()
+        return _ok(
+            opportunity_id=data["id"],
+            message=f"Opportunity '{title}' created at {data['stage']} stage",
+            data=data,
+        )
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("get_opportunity", args_schema=GetOpportunityInput)
@@ -378,26 +305,14 @@ def get_opportunity(user_id: int = 1, opportunity_id: int = 0) -> str:
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            opp = db.query(Opportunity).filter(
-                Opportunity.id == opportunity_id,
-                Opportunity.user_id == actual_user_id
-            ).first()
-            if not opp:
-                return json.dumps({"success": False, "error": "not_found", "message": "Opportunity not found"})
-            return json.dumps({
-                "success": True,
-                "data": {
-                    "id": opp.id,
-                    "title": opp.title,
-                    "value": str(opp.value),
-                    "stage": opp.stage,
-                    "contact_id": opp.contact_id,
-                }
-            })
+            data = opportunities_service.get_opportunity(db, actual_user_id, opportunity_id)
         finally:
             db.close()
+        if not data:
+            return _not_found("Opportunity not found")
+        return _ok(data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("list_opportunities", args_schema=ListOpportunitiesInput)
@@ -407,23 +322,12 @@ def list_opportunities(user_id: int = 1, stage: Optional[str] = None) -> str:
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            query = db.query(Opportunity).filter(Opportunity.user_id == actual_user_id)
-            if stage:
-                query = query.filter(Opportunity.stage == stage)
-            opps = query.order_by(Opportunity.created_at.desc()).limit(50).all()
-            return json.dumps({
-                "success": True,
-                "opportunities": [{
-                    "id": o.id,
-                    "title": o.title,
-                    "value": str(o.value),
-                    "stage": o.stage,
-                } for o in opps]
-            })
+            data = opportunities_service.list_opportunities(db, actual_user_id, stage=stage)
         finally:
             db.close()
+        return _ok(opportunities=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("update_opportunity_stage", args_schema=UpdateOpportunityStageInput)
@@ -440,23 +344,14 @@ def update_opportunity_stage(user_id: int = 1, opportunity_id: int = 0, stage: s
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            opp = db.query(Opportunity).filter(
-                Opportunity.id == opportunity_id,
-                Opportunity.user_id == actual_user_id
-            ).first()
-            if not opp:
-                return json.dumps({"success": False, "error": "not_found", "message": "Opportunity not found"})
-            opp.stage = stage
-            db.commit()
-            return json.dumps({
-                "success": True,
-                "message": f"Opportunity moved to '{stage}'",
-                "data": {"id": opp.id, "stage": opp.stage}
-            })
+            data = opportunities_service.update_opportunity_stage(db, actual_user_id, opportunity_id, stage)
         finally:
             db.close()
+        if not data:
+            return _not_found("Opportunity not found")
+        return _ok(message=f"Opportunity moved to '{stage}'", data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("create_task", args_schema=CreateTaskInput)
@@ -465,42 +360,20 @@ def create_task(user_id: int = 1, title: str = "", description: Optional[str] = 
              contact_id: Optional[int] = None,
              opportunity_id: Optional[int] = None) -> str:
     """Create a follow-up task or to-do item."""
-    valid_statuses = ["pending", "in_progress", "completed"]
-    valid_priorities = ["low", "medium", "high", "urgent"]
-    if status not in valid_statuses:
-        status = "pending"
-    if priority not in valid_priorities:
-        priority = "medium"
     try:
         actual_user_id = user_id or UserContext.get_user_id() or 1
+        due = datetime.strptime(due_date, "%Y-%m-%d") if due_date else None
         db: Session = get_db_session()
         try:
-            due = None
-            if due_date:
-                due = datetime.strptime(due_date, "%Y-%m-%d")
-            db_task = Task(
-                user_id=actual_user_id,
-                title=title,
-                description=description,
-                status=status,
-                priority=priority,
-                due_date=due,
-                contact_id=contact_id,
-                opportunity_id=opportunity_id,
+            data = tasks_service.create_task(
+                db, actual_user_id, title=title, description=description, status=status,
+                priority=priority, due_date=due, contact_id=contact_id, opportunity_id=opportunity_id,
             )
-            db.add(db_task)
-            db.commit()
-            db.refresh(db_task)
-            return json.dumps({
-                "success": True,
-                "task_id": db_task.id,
-                "message": f"Task '{title}' created",
-                "data": {"id": db_task.id, "title": db_task.title, "status": db_task.status}
-            })
         finally:
             db.close()
+        return _ok(task_id=data["id"], message=f"Task '{title}' created", data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("get_task", args_schema=GetTaskInput)
@@ -510,27 +383,14 @@ def get_task(user_id: int = 1, task_id: int = 0) -> str:
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            task = db.query(Task).filter(
-                Task.id == task_id,
-                Task.user_id == actual_user_id
-            ).first()
-            if not task:
-                return json.dumps({"success": False, "error": "not_found", "message": "Task not found"})
-            return json.dumps({
-                "success": True,
-                "data": {
-                    "id": task.id,
-                    "title": task.title,
-                    "description": task.description,
-                    "status": task.status,
-                    "priority": task.priority,
-                    "due_date": task.due_date.isoformat() if task.due_date else None,
-                }
-            })
+            data = tasks_service.get_task(db, actual_user_id, task_id)
         finally:
             db.close()
+        if not data:
+            return _not_found("Task not found")
+        return _ok(data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("list_tasks", args_schema=ListTasksInput)
@@ -540,24 +400,12 @@ def list_tasks(user_id: int = 1, status: Optional[str] = None) -> str:
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            query = db.query(Task).filter(Task.user_id == actual_user_id)
-            if status:
-                query = query.filter(Task.status == status)
-            tasks = query.order_by(Task.due_date.asc().nullslast()).limit(50).all()
-            return json.dumps({
-                "success": True,
-                "tasks": [{
-                    "id": t.id,
-                    "title": t.title,
-                    "status": t.status,
-                    "priority": t.priority,
-                    "due_date": t.due_date.isoformat() if t.due_date else None,
-                } for t in tasks]
-            })
+            data = tasks_service.list_tasks(db, actual_user_id, status=status)
         finally:
             db.close()
+        return _ok(tasks=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("update_task_status", args_schema=UpdateTaskStatusInput)
@@ -574,23 +422,14 @@ def update_task_status(user_id: int = 1, task_id: int = 0, status: str = "") -> 
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            task = db.query(Task).filter(
-                Task.id == task_id,
-                Task.user_id == actual_user_id
-            ).first()
-            if not task:
-                return json.dumps({"success": False, "error": "not_found", "message": "Task not found"})
-            task.status = status
-            db.commit()
-            return json.dumps({
-                "success": True,
-                "message": f"Task marked as '{status}'",
-                "data": {"id": task.id, "status": task.status}
-            })
+            data = tasks_service.update_task_status(db, actual_user_id, task_id, status)
         finally:
             db.close()
+        if not data:
+            return _not_found("Task not found")
+        return _ok(message=f"Task marked as '{status}'", data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("create_activity", args_schema=CreateActivityInput)
@@ -599,37 +438,20 @@ def create_activity(user_id: int = 1, activity_type: str = "", description: Opti
                   opportunity_id: Optional[int] = None,
                   scheduled_at: Optional[str] = None) -> str:
     """Log a customer interaction (call, email, meeting, note)."""
-    valid_types = ["call", "email", "meeting", "note", "task", "other"]
-    if activity_type not in valid_types:
-        activity_type = "other"
     try:
         actual_user_id = user_id or UserContext.get_user_id() or 1
+        scheduled = datetime.fromisoformat(scheduled_at) if scheduled_at else None
         db: Session = get_db_session()
         try:
-            scheduled = None
-            if scheduled_at:
-                scheduled = datetime.fromisoformat(scheduled_at)
-            db_activity = Activity(
-                user_id=actual_user_id,
-                type=activity_type,
-                description=description,
-                contact_id=contact_id,
-                opportunity_id=opportunity_id,
-                scheduled_at=scheduled,
+            data = activities_service.create_activity(
+                db, actual_user_id, type=activity_type, description=description,
+                contact_id=contact_id, opportunity_id=opportunity_id, scheduled_at=scheduled,
             )
-            db.add(db_activity)
-            db.commit()
-            db.refresh(db_activity)
-            return json.dumps({
-                "success": True,
-                "activity_id": db_activity.id,
-                "message": f"Activity '{activity_type}' logged",
-                "data": {"id": db_activity.id, "type": db_activity.type}
-            })
         finally:
             db.close()
+        return _ok(activity_id=data["id"], message=f"Activity '{data['type']}' logged", data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("list_activities", args_schema=ListActivitiesInput)
@@ -640,26 +462,14 @@ def list_activities(user_id: int = 1, contact_id: Optional[int] = None,
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            query = db.query(Activity).filter(Activity.user_id == actual_user_id)
-            if contact_id:
-                query = query.filter(Activity.contact_id == contact_id)
-            if opportunity_id:
-                query = query.filter(Activity.opportunity_id == opportunity_id)
-            activities = query.order_by(Activity.created_at.desc()).limit(50).all()
-            return json.dumps({
-                "success": True,
-                "activities": [{
-                    "id": a.id,
-                    "type": a.type,
-                    "description": a.description,
-                    "contact_id": a.contact_id,
-                    "created_at": a.created_at.isoformat(),
-                } for a in activities]
-            })
+            data = activities_service.list_activities(
+                db, actual_user_id, contact_id=contact_id, opportunity_id=opportunity_id
+            )
         finally:
             db.close()
+        return _ok(activities=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("get_dashboard", args_schema=GetDashboardInput)
@@ -669,34 +479,12 @@ def get_dashboard(user_id: int = 1) -> str:
         actual_user_id = user_id or UserContext.get_user_id() or 1
         db: Session = get_db_session()
         try:
-            from sqlalchemy import func
-            total_contacts = db.query(Contact).filter(Contact.user_id == actual_user_id).count()
-            total_opps = db.query(Opportunity).filter(Opportunity.user_id == actual_user_id).count()
-            total_tasks = db.query(Task).filter(Task.user_id == actual_user_id).count()
-            open_tasks = db.query(Task).filter(Task.user_id == actual_user_id, Task.status != "completed").count()
-            pipeline_value = db.query(func.sum(Opportunity.value)).filter(
-                Opportunity.user_id == actual_user_id,
-                Opportunity.stage.in_(["lead", "qualified", "proposal"])
-            ).scalar() or 0
-            won_value = db.query(func.sum(Opportunity.value)).filter(
-                Opportunity.user_id == actual_user_id,
-                Opportunity.stage == "won"
-            ).scalar() or 0
-            return json.dumps({
-                "success": True,
-                "data": {
-                    "total_contacts": total_contacts,
-                    "total_opportunities": total_opps,
-                    "total_tasks": total_tasks,
-                    "open_tasks": open_tasks,
-                    "pipeline_value": str(pipeline_value),
-                    "won_value": str(won_value),
-                }
-            })
+            data = reports_service.get_dashboard(db, actual_user_id)
         finally:
             db.close()
+        return _ok(data=data)
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "error_type": "internal_error"})
+        return _err(e)
 
 
 @tool("save_chat_message", args_schema=SaveChatMessageInput)
