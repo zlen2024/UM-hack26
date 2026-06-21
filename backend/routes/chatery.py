@@ -22,7 +22,10 @@ if not logger.handlers:
 
 router = APIRouter()
 
-CHATERY_API_URL = "https://chatery-whatsapp.fly.dev/api/whatsapp"
+# Chatery upstream service. Overridable via env so a new deployment URL only
+# needs a config/secret change, not a code edit. No API key is required by the
+# current instance (left blank -> the X-Api-Key header is omitted).
+CHATERY_API_URL = os.environ.get("CHATERY_API_URL", "https://chatery-whatsapp-xdvdca.fly.dev/api/whatsapp")
 CHATERY_API_KEY = os.environ.get("CHATERY_API_KEY", "")
 
 def get_chatery_headers():
