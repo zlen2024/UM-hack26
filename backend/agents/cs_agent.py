@@ -121,6 +121,10 @@ def _run_agent(message_data: Dict[str, Any], channel: str,
                 for m in db_history[:-1]  # exclude the message we just saved
                 if m.role in ("user", "assistant", "system")
             ]
+            logger.info(
+                f"[Agent] session={session_id} loaded {len(history_messages)} "
+                f"prior message(s) from memory"
+            )
 
             initial_state = {
                 "user_input": message,
