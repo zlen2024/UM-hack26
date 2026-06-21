@@ -43,10 +43,20 @@ Text: "{text}"
 Regardless of language, output valid JSON: {{"trigger": true}} if it contains durable facts, else {{"trigger": false}}."""
 
     try:
-        result = complete_json(messages=[{"role": "user", "content": prompt}], max_tokens=500)
+        result = complete_json(
+            messages=[{"role": "user", "content": prompt}],
+            schema={
+                "type": "object",
+                "properties": {"trigger": {"type": "boolean"}},
+                "required": ["trigger"],
+                "additionalProperties": False,
+            },
+            schema_name="kg_trigger",
+            max_tokens=500,
+        )
         return bool(result.get("trigger", False))
     except Exception as e:
-        logger.error(f"[KG Evaluator] Error: {e}")
+        logger.warning(f"[KG Evaluator] {e}")
         return False
 
 
@@ -102,6 +112,39 @@ Output:
 """
 
 
+# Schema for structured extraction. Passing this makes complete_json use the
+# provider's json_schema mode (the reliable structured-output path) first.
+_EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "nodes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "label": {"type": "string"}},
+                "required": ["id", "label"],
+                "additionalProperties": False,
+            },
+        },
+        "edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "target": {"type": "string"},
+                    "type": {"type": "string"},
+                },
+                "required": ["source", "target", "type"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["nodes", "edges"],
+    "additionalProperties": False,
+}
+
+
 def information_extractor_node(state: dict) -> dict:
     """Extract nodes and edges as structured JSON using DSNF rules."""
     contact_name = state.get("contact_name") or "Unknown User"
@@ -122,11 +165,13 @@ def information_extractor_node(state: dict) -> dict:
                 {"role": "system", "content": _EXTRACTOR_PROMPT},
                 {"role": "user", "content": text_to_extract},
             ],
+            schema=_EXTRACTION_SCHEMA,
+            schema_name="kg_extraction",
             temperature=0.0,
             max_tokens=2000,
         )
     except Exception as e:
-        logger.error(f"[KG Extractor] Error: {e}")
+        logger.warning(f"[KG Extractor] {e} -- skipping extraction this turn")
         extracted_data = {"nodes": [], "edges": []}
 
     if not isinstance(extracted_data, dict):

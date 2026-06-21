@@ -1,17 +1,19 @@
-"""Nodes for the customer-service agent graph: gatekeeper, manager, worker.
+"""Nodes for the customer-service agent graph: router, manager, worker.
 
-Flow: gatekeeper -> (manager <-> worker)* -> END
-The manager plans/answers and may emit tool calls; the worker executes them and
-loops back. ``MAX_TOOL_ITERATIONS`` caps the loop, after which ``force_response``
-produces a final plain-text answer.
+Flow: router -> (manager <-> worker)* -> END
+Every customer-facing reply is written by the manager (one engaging, on-brand
+sales persona), so the router only records the turn and flags it for background
+knowledge-graph extraction. The manager plans/answers and may emit tool calls;
+the worker executes them and loops back. ``MAX_TOOL_ITERATIONS`` caps the loop,
+after which ``force_response`` produces a final plain-text answer.
 """
 
 import json
 import logging
 import re
 
-from .llm import CHAT_MODEL, complete_json, format_tool_to_openai, get_chat_client, parse_llm_json
-from .prompts import GATEKEEPER_SCHEMA, gatekeeper_system_prompt, manager_system_prompt
+from .llm import CHAT_MODEL, format_tool_to_openai, get_chat_client
+from .prompts import manager_system_prompt
 from .state import AgentState
 from .tools import CRM_TOOLS
 
@@ -29,72 +31,31 @@ _GREETINGS = {
 }
 
 
-def _history_text(messages: list) -> str:
-    lines = []
-    for m in messages or []:
-        role = "Customer" if m.get("role") == "user" else "Agent"
-        lines.append(f"{role}: {m.get('content')}")
-    return "\n".join(lines)
-
-
 def gatekeeper_node(state: AgentState) -> dict:
-    """Route the message: answer simple greetings directly, else hand to the manager."""
-    logger.info("--- [NODE: GATEKEEPER] Executing ---")
+    """Record the turn and flag it for KG extraction; the manager writes the reply.
+
+    No LLM call and no canned replies — routing everything to the manager means
+    every message gets the same engaging, channel-formatted, business-aware
+    answer instead of a weaker router-written one.
+    """
+    logger.info("--- [NODE: ROUTER] Executing ---")
     user_input = state.get("user_input", "")
 
-    # Fast-path: greet without an LLM round trip.
     normalized = re.sub(r"[^a-z\s]", "", user_input.lower()).strip()
-    if normalized in _GREETINGS or len(normalized) < 2:
-        logger.info("[Gatekeeper] Fast-path greeting.")
-        contact_name = state.get("contact_name", "").strip()
-        greeting_name = f" {contact_name}" if contact_name else ""
-        return {
-            "gatekeeper_response": {
-                "response": f"Hello{greeting_name}! How can I help you today?",
-                "agent_loop": False,
-                "query": "",
-                "contains_knowledge": False,
-            },
-            "trigger_kg": False,
-        }
+    is_trivial = normalized in _GREETINGS or len(normalized) < 2
 
-    system_prompt = gatekeeper_system_prompt(state)
-    history = _history_text(state.get("messages", []))
-    if history:
-        system_prompt += f"\n=== RECENT CONVERSATION HISTORY ===\n{history}"
-
-    try:
-        result = complete_json(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f'Input: "{user_input}"'},
-            ],
-            schema=GATEKEEPER_SCHEMA,
-            schema_name="gatekeeper_response",
-            max_tokens=2000,
-        )
-        logger.info(
-            f"[Gatekeeper] agent_loop={result.get('agent_loop')} "
-            f"contains_knowledge={result.get('contains_knowledge')}"
-        )
-    except Exception as e:
-        logger.error(f"[Gatekeeper] Error: {e}", exc_info=True)
-        result = {
-            "response": "I'm sorry, I'm having trouble processing your request right now.",
-            "agent_loop": False,
-            "query": "",
-            "contains_knowledge": False,
-        }
-
-    # Add the current turn (the cleaned query, or raw input) to the conversation.
-    query_to_add = result.get("query") or user_input
-    # Run background KG extraction on any substantive (agent-loop) turn — the
-    # extractor decides what (if anything) is worth saving, so we don't depend
-    # on the model reliably flagging `contains_knowledge`.
     return {
-        "gatekeeper_response": result,
-        "messages": [{"role": "user", "content": query_to_add}],
-        "trigger_kg": bool(result.get("agent_loop") or result.get("contains_knowledge")),
+        # agent_loop stays True so the manager always answers; downstream readers
+        # (response extraction, kg route) keep working unchanged.
+        "gatekeeper_response": {
+            "response": "",
+            "agent_loop": True,
+            "query": user_input,
+            "contains_knowledge": not is_trivial,
+        },
+        "messages": [{"role": "user", "content": user_input}],
+        # Extract knowledge from any non-trivial turn (greetings/thanks excluded).
+        "trigger_kg": not is_trivial,
     }
 
 
