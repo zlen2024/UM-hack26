@@ -26,6 +26,7 @@ class AgentState(TypedDict, total=False):
     user_id: int
     contact_name: str
     phone: str
+    channel: str
     business_context: str
     business_rules: str
 

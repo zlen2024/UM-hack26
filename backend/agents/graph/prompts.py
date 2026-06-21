@@ -58,6 +58,31 @@ Input: "can you check my order status?"
 Output: {{"response": "Let me check that for you right away...", "agent_loop": true, "query": "check order status", "contains_knowledge": false}}"""
 
 
+def _formatting_guide(state: AgentState) -> str:
+    """Channel-appropriate text-formatting rules for the reply."""
+    channel = (state.get("channel") or "whatsapp").lower()
+    if channel == "telegram":
+        return (
+            "=== FORMATTING (Telegram) ===\n"
+            "Reply in plain text. Use line breaks and the occasional emoji for structure. "
+            "Do NOT use markdown symbols like * or _ — they show up literally here.\n"
+        )
+    # Default: WhatsApp (also used by the Chatery channel).
+    return (
+        "=== FORMATTING (WhatsApp) ===\n"
+        "Format replies with WhatsApp syntax so they render cleanly:\n"
+        "- *bold* for headings and key points (single asterisks)\n"
+        "- _italic_ for subtle emphasis; ~strikethrough~ for corrections/outdated info\n"
+        "- ```text``` (triple backticks) for codes/IDs; monospace CANNOT be combined with other styles\n"
+        "- '- ' (dash + space) for bullet points; '1. ' for numbered steps\n"
+        "- '> ' at the start of a line to quote (repeat it on every quoted line)\n"
+        "WhatsApp does NOT support tables, markdown headings (#), or underline — never use them. "
+        "Use *bold* as a heading and bullet/numbered lists instead of tables.\n"
+        "Put the markers directly against the text (*bold*, never * bold *). Use emojis sparingly, "
+        "and keep replies clean and scannable — don't over-format.\n"
+    )
+
+
 def manager_system_prompt(state: AgentState) -> str:
     return f"""You are a friendly, proactive SALES and customer-service representative for this business.
 {_context_block(state)}
@@ -86,5 +111,7 @@ def manager_system_prompt(state: AgentState) -> str:
 1. Use the conversation history — do NOT re-introduce yourself or repeat what the customer already knows.
 2. Use the customer's name; be friendly and concise. Don't dump giant lists every turn — give what's relevant and invite the next step.
 3. If the customer shares personal/business facts or preferences, acknowledge them naturally (a background agent stores them automatically — no tool needed for that).
-4. **Language Rule**: Reply in the same language the customer uses. For mixed English/Malay, default to English unless they ask otherwise."""
+4. **Language Rule**: Reply in the same language the customer uses. For mixed English/Malay, default to English unless they ask otherwise.
+
+{_formatting_guide(state)}"""
 
