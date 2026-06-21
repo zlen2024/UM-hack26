@@ -57,18 +57,29 @@ def _load_context(db, user_id: Optional[int], message: str) -> tuple[str, str]:
 
 
 def _run_graph(initial_state: dict, send_callback: Optional[Callable[[str], None]]) -> dict:
-    """Stream the graph, firing the gatekeeper's preliminary reply early."""
+    """Stream the graph, returning the final state.
+
+    The gatekeeper's preliminary "on it" reply is sent only when the agent is
+    actually about to run tools (i.e. there will be a real wait). For plain
+    conversational turns the manager's single reply is sent on its own, so the
+    user never gets two messages that both answer the same thing.
+    """
     final_state = dict(initial_state)
     preliminary_sent = False
 
     for state in graph.stream(initial_state, stream_mode="values"):
         final_state = state
-        if not preliminary_sent and send_callback:
-            resp = state.get("gatekeeper_response") or {}
-            if resp.get("agent_loop") and resp.get("response"):
-                logger.info(f"[Agent] Sending preliminary response: {resp['response']}")
-                send_callback(resp["response"])
-                preliminary_sent = True
+        if preliminary_sent or not send_callback:
+            continue
+
+        resp = state.get("gatekeeper_response") or {}
+        messages = state.get("messages") or []
+        last_message = messages[-1] if messages else {}
+        # Only ack when a tool call is pending execution (the slow path).
+        if resp.get("response") and last_message.get("role") == "assistant" and last_message.get("tool_calls"):
+            logger.info(f"[Agent] Sending preliminary response: {resp['response']}")
+            send_callback(resp["response"])
+            preliminary_sent = True
 
     return final_state
 
