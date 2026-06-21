@@ -176,6 +176,15 @@ def information_extractor_node(state: dict) -> dict:
 
     if not isinstance(extracted_data, dict):
         extracted_data = {"nodes": [], "edges": []}
+
+    nodes = extracted_data.get("nodes") or []
+    edges = extracted_data.get("edges") or []
+    logger.info(
+        f"[KG Extractor] GENERATED -> {len(nodes)} node(s), {len(edges)} edge(s): "
+        + ", ".join(
+            f"({e.get('source')})-[{e.get('type')}]->({e.get('target')})" for e in edges[:6]
+        )
+    )
     return {"extracted_kg_data": extracted_data}
 
 
