@@ -380,21 +380,19 @@ def _write_tree(tree: ET.ElementTree) -> None:
 
 
 def _ensure_activity_columns(db: Session) -> None:
+    from sqlalchemy import inspect as sa_inspect
+
     try:
-        result = db.execute(text("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = 'activities'
-        """)).fetchall()
-        columns = {row[0] for row in result}
+        inspector = sa_inspect(db.get_bind())
+        columns = {c["name"] for c in inspector.get_columns("activities")}
     except Exception:
         columns = set()
-    
+
     try:
         if "source" not in columns:
-            db.execute(text("ALTER TABLE activities ADD COLUMN source TEXT"))
+            db.execute(text("ALTER TABLE activities ADD COLUMN source VARCHAR"))
         if "external_id" not in columns:
-            db.execute(text("ALTER TABLE activities ADD COLUMN external_id TEXT"))
+            db.execute(text("ALTER TABLE activities ADD COLUMN external_id VARCHAR"))
         db.commit()
     except Exception as e:
         db.rollback()

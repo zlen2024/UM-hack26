@@ -14,7 +14,7 @@ A full-stack CRM application built with FastAPI (backend) and Next.js (frontend)
 - Python 3.13
 - Node.js 18+
 - uv (Python package manager)
-- PostgreSQL 16+ (or Docker)
+- No database server required — the app uses a local **SQLite** file by default. (PostgreSQL is still supported via `DATABASE_URL`.)
 
 ## Setup & Running
 
@@ -32,10 +32,11 @@ A full-stack CRM application built with FastAPI (backend) and Next.js (frontend)
    uv pip install -r requirements.txt
    ```
 
-3. **Database Setup**: Ensure PostgreSQL is running and set up the `.env` file:
-   - Edit `backend/.env` with your PostgreSQL connection string
-   - Default: `DATABASE_URL=postgresql://user:password@localhost:5432/um_crm`
-   - The database tables will be created automatically on first run
+3. **Database Setup**: No setup needed for the default SQLite database.
+   - On first run the backend creates `backend/um_crm.db` and all tables automatically.
+   - To use PostgreSQL instead, set `DATABASE_URL` in `backend/.env`, e.g.
+     `DATABASE_URL=postgresql://user:password@localhost:5432/um_crm`
+     (and uncomment `psycopg2-binary` in `requirements.txt`).
 
 4. Run the backend server:
    ```powershell

@@ -8,12 +8,21 @@ from langchain_core.tools import tool
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from models import Contact, Opportunity, Task, Activity, User
-from knowledge_db import KnowledgeDBFactory
 
 
 def get_db_session():
     """Get database session."""
     return SessionLocal()
+
+
+def _kg_factory():
+    """Lazily import the knowledge-graph factory.
+
+    Keeping this import local means the agent graph can be built and the CRM
+    tools imported without the optional Ladybug graph-database dependency.
+    """
+    from knowledge_db import KnowledgeDBFactory
+    return KnowledgeDBFactory
 
 
 # ============ User Context Helper ============
@@ -745,7 +754,7 @@ def query_knowledge_graph(query: str) -> str:
     """Execute a Cypher query on the user's knowledge graph to find nodes and edges."""
     try:
         user_id = str(UserContext.get_user_id() or 1)
-        db = KnowledgeDBFactory.get_instance(user_id)
+        db = _kg_factory().get_instance(user_id)
         results = db.execute_cypher(query)
         return json.dumps({
             "success": True,
@@ -761,7 +770,7 @@ def add_kg_node(node_id: str, label: str, properties: Dict[str, Any] = None) -> 
     if properties is None: properties = {}
     try:
         user_id = str(UserContext.get_user_id() or 1)
-        db = KnowledgeDBFactory.get_instance(user_id)
+        db = _kg_factory().get_instance(user_id)
         db.add_node(node_id, label, json.dumps(properties))
         return json.dumps({"success": True, "message": f"Node '{node_id}' added successfully"})
     except Exception as e:
@@ -774,7 +783,7 @@ def update_kg_node(node_id: str, label: str, properties: Dict[str, Any] = None) 
     if properties is None: properties = {}
     try:
         user_id = str(UserContext.get_user_id() or 1)
-        db = KnowledgeDBFactory.get_instance(user_id)
+        db = _kg_factory().get_instance(user_id)
         db.update_node(node_id, label, json.dumps(properties))
         return json.dumps({"success": True, "message": f"Node '{node_id}' updated successfully"})
     except Exception as e:
@@ -787,7 +796,7 @@ def add_kg_edge(source_id: str, target_id: str, edge_type: str, properties: Dict
     if properties is None: properties = {}
     try:
         user_id = str(UserContext.get_user_id() or 1)
-        db = KnowledgeDBFactory.get_instance(user_id)
+        db = _kg_factory().get_instance(user_id)
         db.add_edge(source_id, target_id, edge_type, json.dumps(properties))
         return json.dumps({"success": True, "message": f"Edge from '{source_id}' to '{target_id}' of type '{edge_type}' added successfully"})
     except Exception as e:
@@ -800,7 +809,7 @@ def update_kg_edge(source_id: str, target_id: str, edge_type: str, properties: D
     if properties is None: properties = {}
     try:
         user_id = str(UserContext.get_user_id() or 1)
-        db = KnowledgeDBFactory.get_instance(user_id)
+        db = _kg_factory().get_instance(user_id)
         db.update_edge(source_id, target_id, edge_type, json.dumps(properties))
         return json.dumps({"success": True, "message": f"Edge from '{source_id}' to '{target_id}' of type '{edge_type}' updated successfully"})
     except Exception as e:

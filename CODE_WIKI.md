@@ -14,13 +14,13 @@ The project follows a decoupled client-server architecture:
 
 - **Frontend (Client)**: Built with **Next.js 14** (App Router) and React. Uses **Tailwind CSS** for styling, **@dnd-kit** for Kanban board drag-and-drop interactions, and **next-pwa** for Progressive Web App capabilities.
 - **Backend (Server)**: Built with **FastAPI** (Python 3.13). Exposes RESTful APIs for the frontend and webhook endpoints for third-party integrations.
-- **Database**: Uses **PostgreSQL** (configured via SQLAlchemy ORM).
+- **Database**: Uses **SQLite** by default (a local file, zero-config), and can run on **PostgreSQL** by setting `DATABASE_URL`. Both are accessed through the SQLAlchemy ORM.
 - **AI Agent Layer**: Uses **LangGraph** to build a stateful, multi-actor agent workflow. It leverages LLMs (via OpenRouter or Ilmu AI) to parse natural language into CRM tool executions.
 
 ### High-Level Data Flow
 1. **User Interaction**: Users interact with the Next.js frontend (e.g., moving a deal on the Kanban board).
 2. **API Request**: The frontend sends an authenticated HTTP request (JWT) to the FastAPI backend.
-3. **Business Logic**: The backend processes the request using SQLAlchemy to query/update the PostgreSQL database.
+3. **Business Logic**: The backend processes the request using SQLAlchemy to query/update the relational database (SQLite by default, PostgreSQL optional).
 4. **AI/Webhook Flow**: External messages (WhatsApp/Telegram) hit FastAPI webhook endpoints (`/api/whatsapp`, `/api/telegram`), which trigger the LangGraph AI workflow (`backend/agents/cs_agent.py`) to process intents, execute tools, and respond.
 
 ---
@@ -37,8 +37,16 @@ The project follows a decoupled client-server architecture:
   - `whatsapp.py`, `telegram.py`, `chatery.py`: Webhook handlers for external messaging platforms.
   - `gmail.py`, `google_calendar.py`, `emails.py`: Google Workspace integrations.
 - `agents/`: Contains the LangGraph-based AI agent logic.
-  - `cs_agent.py`: The primary Customer Service AI agent workflow (Gatekeeper -> Manager -> Worker).
-  - `graph/`: Contains tools and graph state definitions for LangGraph.
+  - `cs_agent.py`: Thin entry point / channel adapter. Loads context, runs the graph, persists the conversation, and triggers background KG extraction. Exposes `process_whatsapp_message` / `process_telegram_message` and the compiled `graph`.
+  - `graph/`: The LangGraph workflow package:
+    - `state.py` — `AgentState` with an append-messages reducer.
+    - `llm.py` — centralized LLM client + structured-output helpers.
+    - `prompts.py` — gatekeeper/manager system prompts.
+    - `nodes.py` — `gatekeeper`, `manager`, `worker`, `force_response` nodes (tool-loop capped by `MAX_TOOL_ITERATIONS`).
+    - `edges.py` — conditional routers.
+    - `tools.py` — the CRM tool set (`CRM_TOOLS`).
+    - `kg.py` — background knowledge-graph extraction.
+  - `memory.py`: Conversation persistence and history compaction.
 
 ### Frontend (`/frontend`)
 - `app/`: Next.js App Router pages.
@@ -69,16 +77,18 @@ The application uses SQLAlchemy ORM. Key tables include:
 
 ## 5. Key Classes and Functions
 
-### AI Agent Workflow (`backend/agents/cs_agent.py`)
-The AI agent uses a triad-node LangGraph structure to prevent infinite loops and improve tool execution reliability:
+### AI Agent Workflow (`backend/agents/graph/`)
+The agent is a LangGraph workflow `gatekeeper -> (manager <-> worker)* -> END`, with a `force_response` fallback when the tool loop is capped:
 
-- `gatekeeper_node(state)`: An intent router. Checks if the user's message is a simple greeting (fast-path) or requires complex backend processing. Sets an `agent_loop` flag.
-- `manager_node(state)`: The workflow planner. Analyzes the intent and determines the exact sequence of CRM tools (e.g., `create_contact`, `list_opportunities`) needed. Outputs a structured JSON list of tasks.
-- `worker_node(state)`: The execution engine. Iterates through the tasks provided by the manager, invoking the corresponding Python tools (`CRM_TOOLS`) and returning the results to the state.
-- `process_whatsapp_message(message_data)` / `process_telegram_message(message_data)`: Entry functions that take incoming webhook payloads, initialize the LangGraph state, invoke the graph, and return the AI's response string.
+- `gatekeeper_node(state)` (`nodes.py`): Intent router. Fast-paths simple greetings, otherwise calls the LLM to set `agent_loop` (route to the manager) and `contains_knowledge` (trigger background KG extraction).
+- `manager_node(state)` (`nodes.py`): Planner + conversational agent. Either answers directly or emits OpenAI tool calls for the worker.
+- `worker_node(state)` (`nodes.py`): Execution engine. Runs each tool call against `CRM_TOOLS`, appends tool results, and increments the loop counter.
+- `force_response_node(state)` (`nodes.py`): Produces a final, tool-free answer once `MAX_TOOL_ITERATIONS` is reached — guaranteeing the loop terminates.
+- `process_whatsapp_message(message_data)` / `process_telegram_message(message_data)` (`cs_agent.py`): Channel entry points that share one pipeline; they initialize the state, stream the graph (sending the gatekeeper's preliminary reply via an optional callback), persist the turn, and return the AI's response.
 
-### Backend Routing
-- `ensure_whatsapp_table()`, `ensure_user_columns()` (in `main.py`): Lightweight programmatic schema migrations executed on startup to ensure new features have required database columns without needing a full migration tool like Alembic.
+### Schema Management
+- `Base.metadata.create_all()` (in `main.py`): Creates any missing tables from the ORM models on startup.
+- `run_migrations()` (in `database.py`): Database-agnostic additive column migrations (via `sqlalchemy.inspect`) for databases that predate newer columns. A no-op on a freshly created database; works on both SQLite and PostgreSQL.
 
 ---
 
@@ -86,7 +96,7 @@ The AI agent uses a triad-node LangGraph structure to prevent infinite loops and
 
 ### Backend Dependencies (`requirements.txt`)
 - **FastAPI / Uvicorn**: Core web framework and ASGI server.
-- **SQLAlchemy / psycopg2-binary**: Database ORM and PostgreSQL adapter.
+- **SQLAlchemy**: Database ORM (SQLite by default; `psycopg2-binary` can be enabled for PostgreSQL).
 - **LangGraph / LangChain Core**: Orchestration framework for the multi-actor LLM agent.
 - **OpenAI**: Client SDK used to interface with OpenRouter and Ilmu AI LLMs.
 - **PyJWT / Passlib**: Authentication and password hashing.
@@ -107,13 +117,15 @@ The AI agent uses a triad-node LangGraph structure to prevent infinite loops and
 ### Prerequisites
 - Python 3.13
 - Node.js 18+
-- PostgreSQL 16+
+- No database server required (SQLite by default; PostgreSQL optional)
 
 ### 1. Database Setup
-Ensure PostgreSQL is running. Create a `.env` file in the `backend/` directory:
+No setup is needed for the default SQLite database — it is created automatically
+on first run. Create a `.env` file in the `backend/` directory for API keys (and,
+optionally, a PostgreSQL URL):
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/um_crm
-OPENROUTER_API_KEY=your_api_key
+# Optional — defaults to a local SQLite file when omitted
+DATABASE_URL=sqlite:///./um_crm.db
 ILMU_API_KEY=your_api_key
 ```
 

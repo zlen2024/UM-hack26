@@ -77,10 +77,10 @@ def compact_messages(db: Session, session_id: str) -> None:
         history_text = "\n".join([f"{msg.role}: {msg.content}" for msg in messages_to_compact if msg.content])
         
         try:
-            from agents.graph.agent import get_openrouter_client
-            client = get_openrouter_client()
+            from agents.graph.llm import CHAT_MODEL, get_chat_client
+            client = get_chat_client()
             response = client.chat.completions.create(
-                model="openrouter/elephant-alpha",
+                model=CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that summarizes chat history. Provide a concise summary of the conversation so far."},
                     {"role": "user", "content": f"Please summarize the following chat history:\n\n{history_text}"}

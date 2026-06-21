@@ -1,46 +1,34 @@
+"""Conditional routing for the customer-service agent graph."""
+
+import logging
+
+from langgraph.graph import END
+
+from .nodes import MAX_TOOL_ITERATIONS
 from .state import AgentState
 
-
-def should_continue(state: AgentState) -> str:
-    """Route based on whether tools were called."""
-    last_message = state.get("messages", [])[-1]
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "tools"
-    return "end"
+logger = logging.getLogger("CS_Agent_Workflow")
 
 
-def route_intent(state: AgentState) -> str:
-    """Route to tools based on intent."""
+def gatekeeper_router(state: AgentState) -> str:
+    """Continue to the manager only when the gatekeeper asked for the agent loop."""
+    if state.get("gatekeeper_response", {}).get("agent_loop", False):
+        logger.info("[ROUTER] Gatekeeper -> manager")
+        return "manager"
+    logger.info("[ROUTER] Gatekeeper -> END")
+    return END
+
+
+def manager_router(state: AgentState) -> str:
+    """Route the manager's output: run tools, force a final answer, or finish."""
     messages = state.get("messages", [])
-    if not messages:
-        return "respond"
-    
-    last_msg = messages[-1]
-    msg_text = last_msg.content.lower() if hasattr(last_msg, "content") else str(last_msg)
-    
-    # Simple keyword-based routing
-    contact_keywords = ["contact", "customer", "client", "who is", "look up", "search"]
-    task_keywords = ["task", "todo", "remind", "follow up", "do this"]
-    opportunity_keywords = ["deal", "opportunity", "sale", "pipeline", "value"]
-    activity_keywords = ["call", "meeting", "log", "interaction", "activity"]
-    dashboard_keywords = ["dashboard", "overview", "summary", "report", "metrics"]
-    
-    text = msg_text.lower()
-    
-    for kw in contact_keywords:
-        if kw in text:
-            return "tools"
-    for kw in task_keywords:
-        if kw in text:
-            return "tools"
-    for kw in opportunity_keywords:
-        if kw in text:
-            return "tools"
-    for kw in activity_keywords:
-        if kw in text:
-            return "tools"
-    for kw in dashboard_keywords:
-        if kw in text:
-            return "tools"
-    
-    return "tools"
+    if not messages or not messages[-1].get("tool_calls"):
+        logger.info("[ROUTER] Manager -> END")
+        return END
+
+    if state.get("tool_iterations", 0) >= MAX_TOOL_ITERATIONS:
+        logger.info("[ROUTER] Manager -> force_response (tool-loop cap)")
+        return "force_response"
+
+    logger.info("[ROUTER] Manager -> worker")
+    return "worker"
