@@ -1,54 +1,49 @@
 """Background knowledge-graph extraction for the customer-service agent.
 
-The user's latest message is turned into entities/relationships and persisted to
-the per-user Ladybug graph database. This runs in a background thread so it never
-blocks the customer-facing reply.
+The customer's latest message is parsed into entities/relationships (one LLM
+call, grounded in Dependency Syntactic Normal Forms) and then written to the
+per-user Ladybug graph **deterministically in Python** -- no second "generate
+Cypher" LLM call. The graph uses a fixed schema (all nodes are ``Entity`` with a
+``label`` property, all edges are ``RelatedTo`` with a ``type`` property), so
+``knowledge_db.add_node`` / ``add_edge`` can persist the extracted JSON directly,
+which is cheaper and cannot produce invalid queries.
+
+Runs in a background thread so it never blocks the customer-facing reply.
 """
 
 import json
 import logging
-import os
 
-from .llm import CHAT_MODEL, complete_json, get_chat_client, parse_llm_json
+from .llm import complete_json
 
 logger = logging.getLogger("CS_Agent_Workflow")
-
-_EXTRACT_MODEL = os.getenv("KG_MODEL_NAME", CHAT_MODEL)
 
 
 def evaluate_kg_trigger(text: str) -> bool:
     """Return True if ``text`` contains customer details worth saving to the KG.
 
-    Kept as a standalone helper; the live graph relies on the gatekeeper's
-    ``contains_knowledge`` flag instead of calling this on the hot path.
+    Kept as a standalone helper; the live graph relies on the gatekeeper instead
+    of calling this on the hot path.
     """
     if not text:
         return False
 
-    prompt = f"""Analyze the following text and determine if it contains important customer details that should be extracted into a Knowledge Graph.
+    prompt = f"""Analyze the following customer message and decide if it contains durable facts worth saving to a sales CRM knowledge graph.
 
-=== IMPORTANT DETAILS INCLUDE ===
-- Personal preferences (e.g. likes, dislikes, favorite foods/colors)
-- Identity facts (e.g. names, roles, relationships)
-- Business strategies, goals, or objectives
-- Significant personal or business facts (e.g. "I am the CEO", "We use AWS")
+=== WORTH SAVING ===
+- Identity / role / where they work (e.g. "I run a restaurant", "I'm a reseller")
+- Preferences (likes/dislikes, spicy/sweet, contact method)
+- Needs / quantity / budget / timeline (e.g. "I cook for 50 people", "budget RM200")
+- Relationships, goals, or business context
 
-=== EXAMPLES ===
-Text: "hello.. my name is Daniel... and i love ayam... but i hate sotong.."
-Response: YES
-Text: "can you check my order status?"
-Response: NO
+=== NOT WORTH SAVING ===
+- Pure questions ("how much is it?"), greetings, thanks, order-status checks
 
-=== TASK ===
 Text: "{text}"
-Regardless of the language, output valid JSON with a single boolean field "trigger".
-Output {{"trigger": true}} if the text contains important customer details, else {{"trigger": false}}."""
+Regardless of language, output valid JSON: {{"trigger": true}} if it contains durable facts, else {{"trigger": false}}."""
 
     try:
-        result = complete_json(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-        )
+        result = complete_json(messages=[{"role": "user", "content": prompt}], max_tokens=500)
         return bool(result.get("trigger", False))
     except Exception as e:
         logger.error(f"[KG Evaluator] Error: {e}")
@@ -64,50 +59,67 @@ def _latest_user_text(messages: list) -> str:
     return ""
 
 
-def information_extractor_node(state: dict) -> dict:
-    """Extract nodes and edges as structured JSON using DSNF rules."""
-    contact_name = state.get("contact_name", "Unknown User")
-    phone = state.get("phone", "Unknown Phone")
+_EXTRACTOR_PROMPT = """You are a world-class data ontology expert building a CUSTOMER knowledge graph for a sales / CRM business. Extract entities (Nodes) and relationships (Edges) from the customer's message into strict JSON. Use Dependency Syntactic Normal Forms (DSNFs) so relations come from the sentence's grammar, not guessing.
 
-    user_text = _latest_user_text(state.get("messages", []))
-    text_to_extract = ""
-    if user_text:
-        text_to_extract = (
-            f"Context - Customer Name: {contact_name}, Phone: {phone}\n"
-            f"User Message: {user_text}"
-        )
+=== ANCHOR ===
+The current customer is the central PERSON node. Use their name in lowercase snake_case as its id (given in the context line). If the name is unknown, use "customer_<phone>". Attach every fact the customer reveals to this customer node.
 
-    prompt = """You are a World-Class Data Ontology Expert and Knowledge Graph Architect. Your task is to analyze user text and extract information into entities (Nodes) and relationships (Edges) in strict JSON format. Utilize Dependency Syntactic Normal Forms (DSNFs) to derive relation triples from complex syntax.
+=== ONTOLOGY (node labels) ===
+PERSON, ORGANIZATION, PRODUCT, PREFERENCE, LOCATION, QUANTITY, BUDGET, EVENT, CONCEPT.
 
-**INSTRUCTIONS AND STRICT CONSTRAINTS:**
- 1. **Entity Extraction (Nodes):** Identify primary subjects and objects. Each entity has an id (unique lowercase snake_case name) and a label (e.g. PERSON, DEVICE, CONCEPT, LOCATION).
- 2. **Coreference Resolution:** Map pronouns ("he", "it", "the device") back to the original entity's id. DO NOT create new entities for pronouns.
- 3. **Dependency-Based Relation Extraction (Edges):** Relationship type MUST be UPPER_SNAKE_CASE.
-   * **Basic SVO (DSNF2):** Subject-Verb-Object -> (Entity1, PREDICATE, Entity2).
-   * **Prepositional Modifiers (DSNF3/4):** Combine predicate + preposition -> (Entity1, PREDICATE_PREPOSITION, Entity2).
-   * **Coordination (DSNF5/6/7):** Unpack shared subjects/objects into distinct triples. "X controls Y and Z" -> (X, CONTROLS, Y) and (X, CONTROLS, Z).
- 4. **Output Structure:** ONLY output valid JSON. No prose, no markdown outside the JSON.
+=== COMMON RELATIONS (UPPER_SNAKE_CASE) ===
+WORKS_AT, RUNS, OWNS, INTERESTED_IN, WANTS_TO_BUY, ORDERED, PREFERS, DISLIKES, NEEDS, HAS_BUDGET, LOCATED_IN, ASKED_ABOUT. Create new types when the grammar implies them.
 
-**EXAMPLE**
-Input: "John bought a Xiaomi temperature sensor yesterday. He installed it in the living room."
+=== RULES ===
+1. Nodes: id = unique lowercase snake_case; label from the ontology.
+2. Coreference resolution: map pronouns ("he", "it", "them", "the paste") back to the original entity id. NEVER create a new node for a pronoun.
+3. Derive edges with DSNF:
+   - SVO (DSNF2): Subject-Verb-Object -> (E1, PREDICATE, E2).
+   - Prepositional (DSNF3/4): combine predicate + preposition -> (E1, PREDICATE_PREPOSITION, E2). e.g. "works AT a restaurant" -> WORKS_AT.
+   - Coordination (DSNF5/6/7): split shared subjects/objects into separate triples. "I love the spicy and hate the sweet" -> (cust, PREFERS, spicy) and (cust, DISLIKES, sweet).
+4. Extract ONLY facts explicitly stated. Do NOT infer or invent. If the message has no durable customer facts (a price question, "ok thanks", a greeting), return {"nodes": [], "edges": []}.
+5. Output ONLY valid JSON with "nodes" and "edges". No prose, no markdown.
+
+=== EXAMPLE ===
+Context - Customer Name: Nel, Phone: 60123
+User Message: "btw im works on restaurant... so probably i will cook for a large amount, and i love the spicy one but hate the sweet"
 Output:
 {
   "nodes": [
-    {"id": "john", "label": "PERSON"},
-    {"id": "xiaomi_temperature_sensor", "label": "DEVICE"},
-    {"id": "living_room", "label": "LOCATION"}
+    {"id": "nel", "label": "PERSON"},
+    {"id": "restaurant", "label": "ORGANIZATION"},
+    {"id": "large_quantity", "label": "QUANTITY"},
+    {"id": "spicy", "label": "PREFERENCE"},
+    {"id": "sweet", "label": "PREFERENCE"}
   ],
   "edges": [
-    {"source": "john", "target": "xiaomi_temperature_sensor", "type": "BOUGHT"},
-    {"source": "xiaomi_temperature_sensor", "target": "living_room", "type": "INSTALLED_IN"}
+    {"source": "nel", "target": "restaurant", "type": "WORKS_AT"},
+    {"source": "nel", "target": "large_quantity", "type": "NEEDS"},
+    {"source": "nel", "target": "spicy", "type": "PREFERS"},
+    {"source": "nel", "target": "sweet", "type": "DISLIKES"}
   ]
 }
 """
 
+
+def information_extractor_node(state: dict) -> dict:
+    """Extract nodes and edges as structured JSON using DSNF rules."""
+    contact_name = state.get("contact_name") or "Unknown User"
+    phone = state.get("phone") or "Unknown Phone"
+
+    user_text = _latest_user_text(state.get("messages", []))
+    if not user_text:
+        return {"extracted_kg_data": {"nodes": [], "edges": []}}
+
+    text_to_extract = (
+        f"Context - Customer Name: {contact_name}, Phone: {phone}\n"
+        f"User Message: {user_text}"
+    )
+
     try:
         extracted_data = complete_json(
             messages=[
-                {"role": "system", "content": prompt},
+                {"role": "system", "content": _EXTRACTOR_PROMPT},
                 {"role": "user", "content": text_to_extract},
             ],
             temperature=0.0,
@@ -117,75 +129,87 @@ Output:
         logger.error(f"[KG Extractor] Error: {e}")
         extracted_data = {"nodes": [], "edges": []}
 
+    if not isinstance(extracted_data, dict):
+        extracted_data = {"nodes": [], "edges": []}
     return {"extracted_kg_data": extracted_data}
 
 
-def cypher_generator_node(state: dict) -> dict:
-    """Convert extracted JSON into Cypher MERGE queries and execute them."""
-    extracted_data = state.get("extracted_kg_data", {"nodes": [], "edges": []})
+def _norm_id(value) -> str:
+    return (str(value or "")).strip().lower().replace(" ", "_")
 
-    if not extracted_data.get("nodes") and not extracted_data.get("edges"):
+
+def persist_extracted_data(state: dict) -> dict:
+    """Write the extracted nodes/edges to the graph DB deterministically.
+
+    No LLM is involved: we use the graph's parameterized add_node / add_edge,
+    so writes are always schema-correct. Nodes are written before edges, and any
+    edge endpoint missing from the node list is created as a stub so the edge's
+    MATCH never fails.
+    """
+    data = state.get("extracted_kg_data") or {}
+    nodes = data.get("nodes") or []
+    edges = data.get("edges") or []
+    if not nodes and not edges:
         return {"executed_kg_queries": []}
 
-    prompt = """You are an Expert Graph Database Administrator. Convert JSON (nodes and edges) into ready-to-execute Cypher.
-**STRICT CONSTRAINTS:**
- 1. Use MERGE for every Node and Edge (never CREATE) to prevent duplication.
- 2. Syntax:
-   * MERGE (n:Entity {id: 'id_value'}) for Nodes. Always use `Entity` as the node table.
-   * MERGE (a)-[:RelatedTo {type: 'RELATIONSHIP_TYPE'}]->(b) for Edges. Always use `RelatedTo` as the edge table.
-   * Only create edges after (a) and (b) are MATCHED/MERGED and carried with WITH.
- 3. ONLY output valid JSON containing a "queries" array. No markdown outside the JSON.
-
-**SCHEMA:** Nodes use the `Entity` table with properties id (STRING), label (STRING), properties (STRING). Relationships use `RelatedTo` with properties type (STRING) and properties (STRING).
-
-**EXAMPLE**
-Input JSON: {"nodes": [{"id": "john", "label": "Person"}, {"id": "sensor", "label": "Device"}], "edges": [{"source": "john", "target": "sensor", "type": "BOUGHT"}]}
-Output:
-{
-  "queries": [
-    "MERGE (n1:Entity {id: 'john'}) ON CREATE SET n1.label='Person', n1.properties='{}'",
-    "MERGE (n2:Entity {id: 'sensor'}) ON CREATE SET n2.label='Device', n2.properties='{}'",
-    "MATCH (n1:Entity {id: 'john'}), (n2:Entity {id: 'sensor'}) MERGE (n1)-[r1:RelatedTo]->(n2) ON CREATE SET r1.type='BOUGHT', r1.properties='{}'"
-  ]
-}
-"""
-
-    try:
-        query_data = complete_json(
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": json.dumps(extracted_data)},
-            ],
-            temperature=0.0,
-            max_tokens=2000,
-        )
-        queries = query_data.get("queries", [])
-    except Exception as e:
-        logger.error(f"[KG Cypher] Generation error: {e}")
-        queries = []
+    # Index declared nodes, then ensure every edge endpoint has a node too.
+    declared: dict[str, dict] = {}
+    for n in nodes:
+        nid = _norm_id(n.get("id"))
+        if nid:
+            declared[nid] = {"label": n.get("label") or "ENTITY", "properties": n.get("properties") or {}}
+    for e in edges:
+        for endpoint in (_norm_id(e.get("source")), _norm_id(e.get("target"))):
+            if endpoint and endpoint not in declared:
+                declared[endpoint] = {"label": "ENTITY", "properties": {}}
 
     from knowledge_db import KnowledgeDBFactory
 
-    user_db = KnowledgeDBFactory.get_instance(state.get("user_id", "default"))
+    db = KnowledgeDBFactory.get_instance(state.get("user_id", "default"))
 
-    executed_queries = []
-    for query in queries:
+    def _props(value) -> str:
+        return value if isinstance(value, str) else json.dumps(value or {})
+
+    results = []
+    # 1) Nodes first so edge MATCHes always resolve.
+    for nid, node in declared.items():
         try:
-            user_db.execute_cypher(query)
-            executed_queries.append({"query": query, "status": "success"})
+            db.add_node(nid, str(node["label"]), _props(node["properties"]))
+            results.append({"type": "node", "id": nid, "status": "success"})
         except Exception as e:
-            logger.error(f"[KG Cypher] Execution error: {e} for query: {query}")
-            executed_queries.append({"query": query, "status": "error", "error": str(e)})
+            logger.error(f"[KG Persist] node '{nid}' failed: {e}")
+            results.append({"type": "node", "id": nid, "status": "error", "error": str(e)})
 
-    return {"executed_kg_queries": executed_queries}
+    # 2) Edges.
+    for e in edges:
+        source = _norm_id(e.get("source"))
+        target = _norm_id(e.get("target"))
+        rel = (str(e.get("type") or "RELATED_TO")).strip().upper().replace(" ", "_")
+        if not source or not target:
+            continue
+        try:
+            db.add_edge(source, target, rel, _props(e.get("properties")))
+            results.append({"type": "edge", "source": source, "rel": rel, "target": target, "status": "success"})
+        except Exception as ex:
+            logger.error(f"[KG Persist] edge {source}-{rel}->{target} failed: {ex}")
+            results.append({"type": "edge", "source": source, "rel": rel, "target": target, "status": "error", "error": str(ex)})
+
+    n_nodes = sum(1 for r in results if r["type"] == "node" and r["status"] == "success")
+    n_edges = sum(1 for r in results if r["type"] == "edge" and r["status"] == "success")
+    logger.info(f"[KG Persist] wrote {n_nodes} node(s) and {n_edges} edge(s)")
+    return {"executed_kg_queries": results}
+
+
+# Backwards-compatible name (the old pipeline called this "cypher_generator_node").
+cypher_generator_node = persist_extracted_data
 
 
 def run_kg_extraction_in_background(state: dict) -> None:
-    """Run extraction + persistence end-to-end (intended for a worker thread)."""
+    """Extract facts and persist them to the graph (intended for a worker thread)."""
     logger.info("--- [BACKGROUND] Running KG Extraction ---")
     try:
         state.update(information_extractor_node(state))
-        cypher_generator_node(state)
+        persist_extracted_data(state)
         logger.info("[Background] KG Extraction complete")
     except Exception as e:
         logger.error(f"[Background] Error in KG Extraction: {e}", exc_info=True)
