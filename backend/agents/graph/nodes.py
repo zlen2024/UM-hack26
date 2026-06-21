@@ -88,10 +88,13 @@ def gatekeeper_node(state: AgentState) -> dict:
 
     # Add the current turn (the cleaned query, or raw input) to the conversation.
     query_to_add = result.get("query") or user_input
+    # Run background KG extraction on any substantive (agent-loop) turn — the
+    # extractor decides what (if anything) is worth saving, so we don't depend
+    # on the model reliably flagging `contains_knowledge`.
     return {
         "gatekeeper_response": result,
         "messages": [{"role": "user", "content": query_to_add}],
-        "trigger_kg": bool(result.get("contains_knowledge", False)),
+        "trigger_kg": bool(result.get("agent_loop") or result.get("contains_knowledge")),
     }
 
 
