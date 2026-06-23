@@ -13,10 +13,11 @@ primary_region = 'sin'
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  # Keep exactly ONE machine running. SQLite is a single local file on the
-  # mounted volume, so the app must not be horizontally scaled. Also run
-  # `fly scale count 1` so only one machine (and one volume) exists.
-  min_machines_running = 1
+  # Auto-stop when idle to save cost; the machine restarts on the next request
+  # and remounts the volume with the SQLite data intact. Still keep a SINGLE
+  # machine (`fly scale count 1`) — SQLite is one local file on one volume, so
+  # the app must not be horizontally scaled.
+  min_machines_running = 0
   processes = ['app']
 
 # Persistent volume so the SQLite database survives restarts/redeploys.
